@@ -175,6 +175,12 @@ struct TestStruct3 {
     }
 };
 
+struct TestStruct4 {
+    int x1, x2;
+
+    // void print() { std::cout << x1 << ' ' << x2 << std::endl; }
+};
+
 LUASTRUCT_BEGIN(TestStruct)
 LUASTRUCT_FIELD(x, float)
 LUASTRUCT_FIELD(y, float)
@@ -229,6 +235,17 @@ static int LuaStruct_test_3(lua_State *L) {
     return 1;
 }
 
+static int LuaStruct_test_4(lua_State *L) {
+    LuaStackGuard sg(L);
+    TestStruct4 *v = CHECK_STRUCT(L, 1, TestStruct4);
+
+    v->x1 += 1001;
+    v->x2 += 2002;
+
+    PUSH_STRUCT(L, TestStruct4, *v);
+    return 1;
+}
+
 void createStructTables(lua_State *L) {
 #define XX(T) T##_create(L, #T)
 
@@ -236,7 +253,7 @@ void createStructTables(lua_State *L) {
     XX(TestStruct2);
     XX(TestStruct3);
 
-    // LUASTRUCT_CREATE_NEW<TestStruct3>(L, "TestStruct3");
+    LUASTRUCT_CREATE_NEW<TestStruct4>(L, "TestStruct4");
 
     // ARRAY_uchar8_create(L);
 #undef XX
@@ -266,6 +283,7 @@ int main() {
     luaL_Reg lib[] = {{"LuaStruct_test_1", wrap<LuaStruct_test_1>},
                       {"LuaStruct_test_2", wrap<LuaStruct_test_2>},
                       {"LuaStruct_test_3", wrap<LuaStruct_test_3>},
+                      {"LuaStruct_test_4", wrap<LuaStruct_test_4>},
                       {"nameof", wrap<__neko_bind_nameof>},
                       {"TestAssetKind_1",
                        +[](lua_State *L) {
@@ -320,6 +338,11 @@ int main() {
         test_struct = LuaStruct_test_3(test_struct3)
         table_show(test_struct3_s2.x1,test_struct3_s2.x2)
 
+        test_struct4 = LuaStruct.TestStruct4.new()
+        table_show(test_struct4.x1,test_struct4.x2)
+        test_struct4 = LuaStruct_test_4(test_struct4)
+        table_show(test_struct4.x1,test_struct4.x2)
+
         print(nameof(LuaStruct.TestStruct))
     )");
 
@@ -328,8 +351,16 @@ int main() {
     // luaL_dostring(L, "t = {x = 10, y = 'hello', z = {a = 1, b = 2}}");
     // lua_getglobal(L, "t");
 
-    TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
+    auto PrintTypeinfo = [](neko_luabind_Typeinfo ts) {
+        auto [a, b] = ts;
+        std::cout << ts.name << ' ' << ts.size << '\n';
+    };
 
+    neko_luabind_Type f1 = neko_luabind_type_find(L, "TestEnum");
+    PrintTypeinfo(neko_luabind_typeinfo(L, f1));
+    PrintTypeinfo(neko_luabind_typeinfo(L, "TestEnum"));
+
+    TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
     lua2struct::pack(L, TestStruct3);
 
     vm.Fini(L);

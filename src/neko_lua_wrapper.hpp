@@ -20,8 +20,9 @@
 #include <variant>
 #include <vector>
 
-#include "neko_lua_wrapper.h"
+#include "lua2struct.hpp"
 #include "nameof.hpp"
+#include "neko_lua_wrapper.h"
 #include "reflection.hpp"
 
 #define INHERIT_TABLE "inherit_table"
@@ -975,6 +976,59 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
     lua_pop(L, 1);
 }
 
+template <typename T>
+inline void LuaStructCreate2(lua_State *L, const char *fieldName, const char *type_name, size_t type_size, T fafunc) {
+
+    using fieldaccess_func = T;
+
+    // auto _new = std::bind(LuaStructNew, std::placeholders::_1, type_name, type_size);
+
+    if (fieldName) {
+        lua_createtable(L, 0, 0);
+        // lua_pushinteger(L, type_size);
+        // lua_setfield(L, -2, "type_size");
+        // lua_pushstring(L, type_name);
+        // lua_setfield(L, -2, "type_name");
+
+        lua_pushinteger(L, type_size);
+        lua_pushstring(L, type_name);
+
+        lua_pushcclosure(
+                L,
+                [](lua_State *L) -> int {
+                    size_t _type_size = lua_tointeger(L, lua_upvalueindex(1));
+                    const char *_type_name = lua_tostring(L, lua_upvalueindex(2));
+                    return LuaStructNew(L, _type_name, _type_size);
+                },
+                2);
+        lua_setfield(L, -2, "new");
+        lua_setfield(L, -2, fieldName);
+    }
+
+    // 创建实例元表
+    luaL_newmetatable(L, type_name);
+
+    lua_pushstring(L, type_name);
+    lua_pushcclosure(
+            L,
+            [](lua_State *L) -> int {
+                const char *_type_name = lua_tostring(L, lua_upvalueindex(1));
+                return LuaStructGC(L, _type_name);
+            },
+            1);
+    lua_setfield(L, -2, "__gc");
+
+    lua_pushboolean(L, 0);
+    lua_pushcclosure(L, fafunc, 1);
+    lua_setfield(L, -2, "__index");
+
+    lua_pushboolean(L, 1);
+    lua_pushcclosure(L, fafunc, 1);
+    lua_setfield(L, -2, "__newindex");
+
+    lua_pop(L, 1);
+}
+
 #define LUASTRUCT_BEGIN(type)                                        \
     static int type##_fieldaccess(lua_State *L, int index, int set); \
     LUASTRUCT_CREATE(type)                                           \
@@ -1000,6 +1054,52 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
 #define LUASTRUCT_FIELDACCESS_END                                 \
     return luaL_error(L, "Invalid field %s.%s", typeName, field); \
     }
+
+template <typename T, std::size_t I>
+int LUASTRUCT_FIELD_W(lua_State *L, const char *field, int set, T &v) {
+
+    int index = 1;
+
+    if constexpr (I < lua2struct::reflection::field_count<T>) {
+        constexpr auto name = lua2struct::reflection::field_name<T, I>;
+        // lua_getfield(L, arg, name.data());
+
+        if (std::string_view(name) == field) {
+            auto &af = lua2struct::reflection::field_access<I>(v);
+            return LuaStructAccess<lua2struct::reflection::field_type<T, I>>::Get(L, field, &af, index, set, index + 2);
+        }
+
+        printf("LUASTRUCT_FIELD_W %s %s\n", name.data(), field);
+
+        // lua2struct::reflection::field_access<I>(v) = unpack<lua2struct::reflection::field_type<D, I>>(L, -1);
+        // lua_pop(L, 1);
+        return LUASTRUCT_FIELD_W<T, I + 1>(L, field, set, v);
+    }
+
+    return luaL_error(L, "Invalid field %s", field);
+};
+
+template <typename T>
+void LUASTRUCT_CREATE_NEW(lua_State *L, const char *fieldName) {
+
+    auto fieldaccess = [](lua_State *L) -> int {
+        int index = 1;
+        int set = lua_toboolean(L, lua_upvalueindex(1));
+
+        printf("fieldaccess %d\n", set);
+
+        const char *typeName = nameof::nameof_short_type<T>().data();
+        T *data = (LuaStructTodata<T>(L, typeName, index, LUASTRUCT_REQUIRED));
+        size_t length = 0;
+        const char *field = LuaStructFieldname(L, index + 1, &length);
+
+        printf("fieldaccess %s\n", field);
+
+        return LUASTRUCT_FIELD_W<T, 0>(L, field, set, *data);
+    };
+
+    LuaStructCreate2(L, fieldName, nameof::nameof_short_type<T>().data(), sizeof(T), fieldaccess);
+}
 
 template <lua_CFunction func>
 int wrap(lua_State *L) {
@@ -1077,9 +1177,51 @@ neko_luabind_Type neko_luabind_type_add(lua_State *L) {
     }
 }
 
-neko_luabind_Type neko_luabind_type_find(lua_State *L, const char *type);
-const char *neko_luabind_typename(lua_State *L, neko_luabind_Type id);
-size_t neko_luabind_typesize(lua_State *L, neko_luabind_Type id);
+inline auto neko_luabind_type_find(lua_State *L, const char *type) -> neko_luabind_Type {
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_ids");
+    lua_getfield(L, -1, type);
+
+    neko_luabind_Type id = lua_isnil(L, -1) ? LUAA_INVALID_TYPE : lua_tointeger(L, -1);
+    lua_pop(L, 2);
+
+    return id;
+}
+
+struct neko_luabind_Typeinfo {
+    const char *name;
+    size_t size;
+};
+
+template <typename T>
+inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, T id);
+
+template <>
+inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, neko_luabind_Type id) {
+
+    neko_luabind_Typeinfo typeinfo{};
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_names");
+    lua_pushinteger(L, id);
+    lua_gettable(L, -2);
+
+    typeinfo.name = lua_isnil(L, -1) ? "LUAA_INVALID_TYPE" : lua_tostring(L, -1);
+    lua_pop(L, 2);
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_sizes");
+    lua_pushinteger(L, id);
+    lua_gettable(L, -2);
+
+    typeinfo.size = lua_isnil(L, -1) ? -1 : lua_tointeger(L, -1);
+    lua_pop(L, 2);
+
+    return typeinfo;
+}
+
+template <>
+inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, const char *name) {
+    return neko_luabind_typeinfo(L, neko_luabind_type_find(L, name));
+}
 
 #define neko_luabind_push(L, type, c_in) neko_luabind_push_type(L, neko_luabind_type(L, type), c_in)
 #define neko_luabind_to(L, type, c_out, index) neko_luabind_to_type(L, neko_luabind_type(L, type), c_out, index)

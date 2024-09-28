@@ -620,41 +620,6 @@ int __neko_bind_nameof(lua_State *L) {
 
 // enum
 
-neko_luabind_Type neko_luabind_type_find(lua_State *L, const char *type) {
-
-    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_ids");
-    lua_getfield(L, -1, type);
-
-    neko_luabind_Type id = lua_isnil(L, -1) ? LUAA_INVALID_TYPE : lua_tointeger(L, -1);
-    lua_pop(L, 2);
-
-    return id;
-}
-
-const char *neko_luabind_typename(lua_State *L, neko_luabind_Type id) {
-
-    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_names");
-    lua_pushinteger(L, id);
-    lua_gettable(L, -2);
-
-    const char *type = lua_isnil(L, -1) ? "LUAA_INVALID_TYPE" : lua_tostring(L, -1);
-    lua_pop(L, 2);
-
-    return type;
-}
-
-size_t neko_luabind_typesize(lua_State *L, neko_luabind_Type id) {
-
-    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_sizes");
-    lua_pushinteger(L, id);
-    lua_gettable(L, -2);
-
-    size_t size = lua_isnil(L, -1) ? -1 : lua_tointeger(L, -1);
-    lua_pop(L, 2);
-
-    return size;
-}
-
 /*
 ** Stack
 */
@@ -681,7 +646,7 @@ int neko_luabind_push_type(lua_State *L, neko_luabind_Type type_id, const void *
         return neko_lua_enum_push_type(L, type_id, c_in);
     }
 
-    lua_pushfstring(L, "neko_luabind_push: conversion to Lua object from type '%s' not registered!", neko_luabind_typename(L, type_id));
+    lua_pushfstring(L, "neko_luabind_push: conversion to Lua object from type '%s' not registered!", neko_luabind_typeinfo(L, type_id).name);
     lua_error(L);
     return 0;
 }
@@ -711,7 +676,7 @@ void neko_luabind_to_type(lua_State *L, neko_luabind_Type type_id, void *c_out, 
         return;
     }
 
-    lua_pushfstring(L, "neko_luabind_to: conversion from Lua object to type '%s' not registered!", neko_luabind_typename(L, type_id));
+    lua_pushfstring(L, "neko_luabind_to: conversion from Lua object to type '%s' not registered!", neko_luabind_typeinfo(L, type_id).name);
     lua_error(L);
 }
 
@@ -744,13 +709,13 @@ int neko_lua_enum_push_type(lua_State *L, neko_luabind_Type type, const void *va
         }
 
         lua_pop(L, 3);
-        lua_pushfstring(L, "neko_lua_enum_push: Enum '%s' value %d not registered!", neko_luabind_typename(L, type), lvalue);
+        lua_pushfstring(L, "neko_lua_enum_push: Enum '%s' value %d not registered!", neko_luabind_typeinfo(L, type).name, lvalue);
         lua_error(L);
         return 0;
     }
 
     lua_pop(L, 2);
-    lua_pushfstring(L, "neko_lua_enum_push: Enum '%s' not registered!", neko_luabind_typename(L, type));
+    lua_pushfstring(L, "neko_lua_enum_push: Enum '%s' not registered!", neko_luabind_typeinfo(L, type).name);
     lua_error(L);
     return 0;
 }
@@ -783,13 +748,13 @@ void neko_lua_enum_to_type(lua_State *L, neko_luabind_Type type, void *c_out, in
         }
 
         lua_pop(L, 3);
-        lua_pushfstring(L, "neko_lua_enum_to: Enum '%s' field '%s' not registered!", neko_luabind_typename(L, type), name);
+        lua_pushfstring(L, "neko_lua_enum_to: Enum '%s' field '%s' not registered!", neko_luabind_typeinfo(L, type).name, name);
         lua_error(L);
         return;
     }
 
     lua_pop(L, 3);
-    lua_pushfstring(L, "neko_lua_enum_to: Enum '%s' not registered!", neko_luabind_typename(L, type));
+    lua_pushfstring(L, "neko_lua_enum_to: Enum '%s' not registered!", neko_luabind_typeinfo(L, type).name);
     lua_error(L);
     return;
 }
@@ -824,7 +789,7 @@ bool neko_lua_enum_has_value_type(lua_State *L, neko_luabind_Type type, const vo
     }
 
     lua_pop(L, 2);
-    lua_pushfstring(L, "neko_lua_enum_has_value: Enum '%s' not registered!", neko_luabind_typename(L, type));
+    lua_pushfstring(L, "neko_lua_enum_has_value: Enum '%s' not registered!", neko_luabind_typeinfo(L, type).name);
     lua_error(L);
     return false;
 }
@@ -848,7 +813,7 @@ bool neko_lua_enum_has_name_type(lua_State *L, neko_luabind_Type type, const cha
     }
 
     lua_pop(L, 2);
-    lua_pushfstring(L, "neko_lua_enum_has_name: Enum '%s' not registered!", neko_luabind_typename(L, type));
+    lua_pushfstring(L, "neko_lua_enum_has_name: Enum '%s' not registered!", neko_luabind_typeinfo(L, type).name);
     lua_error(L);
     return false;
 }
@@ -912,7 +877,7 @@ void neko_lua_enum_value_type(lua_State *L, neko_luabind_Type type, const void *
     }
 
     lua_pop(L, 2);
-    lua_pushfstring(L, "neko_lua_enum_value: Enum '%s' not registered!", neko_luabind_typename(L, type));
+    lua_pushfstring(L, "neko_lua_enum_value: Enum '%s' not registered!", neko_luabind_typeinfo(L, type).name);
     lua_error(L);
 }
 
@@ -948,7 +913,7 @@ const char *neko_lua_enum_next_value_name_type(lua_State *L, neko_luabind_Type t
     }
 
     lua_pop(L, 2);
-    lua_pushfstring(L, "neko_lua_enum_next_enum_name_type: Enum '%s' not registered!", neko_luabind_typename(L, type));
+    lua_pushfstring(L, "neko_lua_enum_next_enum_name_type: Enum '%s' not registered!", neko_luabind_typeinfo(L, type).name);
     lua_error(L);
     return NULL;
 }
