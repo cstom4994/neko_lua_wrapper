@@ -9,10 +9,19 @@
 
 #include "neko_lua_wrapper.h"
 
-namespace neko::luabind {
+namespace neko {
+
+namespace reflection {
 
 // fwd
+template <unsigned short N>
+struct cstring;
 
+}  // namespace reflection
+
+namespace luabind {
+
+// fwd
 template <typename T>
 struct LuaStack;
 
@@ -20,23 +29,8 @@ struct LuaStack;
 
 namespace lua2struct {
 namespace reflection {
-template <unsigned short N>
-struct cstring {
-    constexpr explicit cstring(std::string_view str) noexcept : cstring{str, std::make_integer_sequence<unsigned short, N>{}} {}
-    constexpr const char *data() const noexcept { return chars_; }
-    constexpr unsigned short size() const noexcept { return N; }
-    constexpr operator std::string_view() const noexcept { return {data(), size()}; }
-    template <unsigned short... I>
-    constexpr cstring(std::string_view str, std::integer_sequence<unsigned short, I...>) noexcept : chars_{str[I]..., '\0'} {}
-    char chars_[static_cast<size_t>(N) + 1];
-};
-template <>
-struct cstring<0> {
-    constexpr explicit cstring(std::string_view) noexcept {}
-    constexpr const char *data() const noexcept { return nullptr; }
-    constexpr unsigned short size() const noexcept { return 0; }
-    constexpr operator std::string_view() const noexcept { return {}; }
-};
+
+using namespace neko::reflection;
 
 template <typename T>
 struct wrapper {
@@ -448,4 +442,6 @@ void pack_struct(lua_State *L, const T &v) {
 }
 }  // namespace lua2struct
 
-}  // namespace neko::luabind
+}  // namespace luabind
+
+}  // namespace neko

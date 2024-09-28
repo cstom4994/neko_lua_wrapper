@@ -21,13 +21,102 @@
 #include <vector>
 
 #include "lua2struct.hpp"
-#include "nameof.hpp"
 #include "neko_lua_wrapper.h"
-#include "reflection.hpp"
 
 #define INHERIT_TABLE "inherit_table"
 
 namespace neko {
+
+namespace reflection {
+
+template <unsigned short N>
+struct cstring {
+    constexpr explicit cstring(std::string_view str) noexcept : cstring{str, std::make_integer_sequence<unsigned short, N>{}} {}
+    constexpr const char *data() const noexcept { return chars_; }
+    constexpr unsigned short size() const noexcept { return N; }
+    constexpr operator std::string_view() const noexcept { return {data(), size()}; }
+    template <unsigned short... I>
+    constexpr cstring(std::string_view str, std::integer_sequence<unsigned short, I...>) noexcept : chars_{str[I]..., '\0'} {}
+    char chars_[static_cast<size_t>(N) + 1];
+};
+template <>
+struct cstring<0> {
+    constexpr explicit cstring(std::string_view) noexcept {}
+    constexpr const char *data() const noexcept { return nullptr; }
+    constexpr unsigned short size() const noexcept { return 0; }
+    constexpr operator std::string_view() const noexcept { return {}; }
+};
+
+template <typename T>
+constexpr auto name_raw() noexcept {
+#if defined(__clang__) || defined(__GNUC__)
+    std::string_view name = __PRETTY_FUNCTION__;
+    size_t start = name.find('=') + 2;
+    size_t end = name.size() - 1;
+    return std::string_view{name.data() + start, end - start};
+#elif defined(_MSC_VER)
+    std::string_view name = __FUNCSIG__;
+    size_t start = name.find('<') + 1;
+    size_t end = name.rfind(">(");
+    name = std::string_view{name.data() + start, end - start};
+    start = name.find(' ');
+    return start == std::string_view::npos ? name : std::string_view{name.data() + start + 1, name.size() - start - 1};
+#else
+#error Unsupported compiler
+#endif
+}
+
+template <typename T>
+constexpr auto name() noexcept {
+    constexpr auto name = name_raw<T>();
+    return cstring<name.size()>{name};
+}
+template <typename T>
+constexpr auto name_v = name<T>();
+
+struct DummyFlag {};
+template <typename Enum, typename T, Enum enumValue>
+inline int get_enum_value(std::map<int, std::string> &values) {
+#if defined _MSC_VER && !defined __clang__
+    std::string func(__FUNCSIG__);
+    std::string mark = "DummyFlag";
+    auto pos = func.find(mark) + mark.size();
+    std::string enumStr = func.substr(pos);
+
+    auto start = enumStr.find_first_not_of(", ");
+    auto end = enumStr.find('>');
+    if (start != enumStr.npos && end != enumStr.npos && enumStr[start] != '(') {
+        enumStr = enumStr.substr(start, end - start);
+        values.insert({(int)enumValue, enumStr});
+    }
+
+#else  // gcc, clang
+    std::string func(__PRETTY_FUNCTION__);
+    std::string mark = "enumValue = ";
+    auto pos = func.find(mark) + mark.size();
+    std::string enumStr = func.substr(pos, func.size() - pos - 1);
+    char ch = enumStr[0];
+    if (!(ch >= '0' && ch <= '9') && ch != '(') values.insert({(int)enumValue, enumStr});
+#endif
+    return 0;
+}
+
+template <typename Enum, int min_value, int... ints>
+void guess_enum_range(std::map<int, std::string> &values, const std::integer_sequence<int, ints...> &) {
+    auto dummy = {get_enum_value<Enum, DummyFlag, (Enum)(ints + min_value)>(values)...};
+}
+
+template <typename Enum, int... ints>
+void guess_enum_bit_range(std::map<int, std::string> &values, const std::integer_sequence<int, ints...> &) {
+    auto dummy = {get_enum_value<Enum, DummyFlag, (Enum)0>(values), get_enum_value<Enum, DummyFlag, (Enum)(1 << (int)ints)>(values)...};
+}
+
+template <typename T>
+auto GetTypeName() {
+    return reflection::name_v<T>.data();
+}
+
+}  // namespace reflection
 
 namespace luabind {
 
@@ -903,7 +992,7 @@ auto LuaStructTodata_w(lua_State *L, const char *metatable, int index, int requi
 
 template <typename T>
 auto LuaStructTodata(lua_State *L, int index, int required) -> T * {
-    const char *typeName = nameof::nameof_short_type<T>().data();
+    const char *typeName = reflection::GetTypeName<T>();
     return LuaStructTodata_w<T>(L, typeName, index, LUASTRUCT_REQUIRED);
 }
 
@@ -928,7 +1017,7 @@ struct LuaStructAccess {
                 *data = *CHECK_STRUCT(L, valueIndex, T);
                 return 0;
             } else {
-                return LuaStructNewRef(L, nameof::nameof_short_type<T>().data(), parentIndex, data);
+                return LuaStructNewRef(L, reflection::GetTypeName<T>(), parentIndex, data);
             }
         } else {
             if (set) {
@@ -1027,7 +1116,7 @@ void LuaStruct(lua_State *L, const char *fieldName) {
 
         // printf("fieldaccess %d\n", set);
 
-        const char *typeName = nameof::nameof_short_type<T>().data();
+        const char *typeName = reflection::GetTypeName<T>();
         T *data = (LuaStructTodata<T>(L, index, LUASTRUCT_REQUIRED));
         size_t length = 0;
         const char *field = LuaStructFieldname(L, index + 1, &length);
@@ -1037,7 +1126,7 @@ void LuaStruct(lua_State *L, const char *fieldName) {
         return LuaStructField_w<T, 0>(L, typeName, field, set, *data);
     };
 
-    LuaStructCreate(L, fieldName, nameof::nameof_short_type<T>().data(), sizeof(T), fieldaccess);
+    LuaStructCreate(L, fieldName, reflection::GetTypeName<T>(), sizeof(T), fieldaccess);
 
     // lua_setglobal(L, fieldName);
 }
@@ -1046,16 +1135,21 @@ void LuaStruct(lua_State *L, const char *fieldName) {
 
 #define neko_luabind_type(L, type) neko_luabind_type_add<type>(L)
 
-enum { LUAA_INVALID_TYPE = -1 };
+enum { NEKOLUA_INVALID_TYPE = -1 };
 
-typedef lua_Integer neko_luabind_Type;
-typedef int (*neko_luabind_Pushfunc)(lua_State *, neko_luabind_Type, const void *);
-typedef void (*neko_luabind_Tofunc)(lua_State *, neko_luabind_Type, void *, int);
+typedef lua_Integer LuaTypeid;
+typedef int (*neko_luabind_Pushfunc)(lua_State *, LuaTypeid, const void *);
+typedef void (*neko_luabind_Tofunc)(lua_State *, LuaTypeid, void *, int);
+
+struct LuaTypeinfo {
+    const char *name;
+    size_t size;
+};
 
 template <typename T>
-neko_luabind_Type neko_luabind_type_add(lua_State *L) {
+LuaTypeid neko_luabind_type_add(lua_State *L) {
 
-    const char *type = nameof::nameof_short_type<T>().data();
+    const char *type = reflection::GetTypeName<T>();
     constexpr size_t size = sizeof(T);
 
     lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_ids");
@@ -1063,7 +1157,7 @@ neko_luabind_Type neko_luabind_type_add(lua_State *L) {
 
     if (lua_isnumber(L, -1)) {
 
-        neko_luabind_Type id = lua_tointeger(L, -1);
+        LuaTypeid id = lua_tointeger(L, -1);
         lua_pop(L, 2);
         return id;
 
@@ -1073,7 +1167,7 @@ neko_luabind_Type neko_luabind_type_add(lua_State *L) {
 
         lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_index");
 
-        neko_luabind_Type id = lua_tointeger(L, -1);
+        LuaTypeid id = lua_tointeger(L, -1);
         lua_pop(L, 1);
         id++;
 
@@ -1101,35 +1195,27 @@ neko_luabind_Type neko_luabind_type_add(lua_State *L) {
     }
 }
 
-inline auto neko_luabind_type_find(lua_State *L, const char *type) -> neko_luabind_Type {
-
+inline auto TypeFind(lua_State *L, const char *type) -> LuaTypeid {
     lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_ids");
     lua_getfield(L, -1, type);
-
-    neko_luabind_Type id = lua_isnil(L, -1) ? LUAA_INVALID_TYPE : lua_tointeger(L, -1);
+    LuaTypeid id = lua_isnil(L, -1) ? NEKOLUA_INVALID_TYPE : lua_tointeger(L, -1);
     lua_pop(L, 2);
-
     return id;
 }
 
-struct neko_luabind_Typeinfo {
-    const char *name;
-    size_t size;
-};
-
 template <typename T>
-inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, T id);
+inline LuaTypeinfo GetLuaTypeinfo(lua_State *L, T id);
 
 template <>
-inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, neko_luabind_Type id) {
+inline LuaTypeinfo GetLuaTypeinfo(lua_State *L, LuaTypeid id) {
 
-    neko_luabind_Typeinfo typeinfo{};
+    LuaTypeinfo typeinfo{};
 
     lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_names");
     lua_pushinteger(L, id);
     lua_gettable(L, -2);
 
-    typeinfo.name = lua_isnil(L, -1) ? "LUAA_INVALID_TYPE" : lua_tostring(L, -1);
+    typeinfo.name = lua_isnil(L, -1) ? "NEKOLUA_INVALID_TYPE" : lua_tostring(L, -1);
     lua_pop(L, 2);
 
     lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "type_sizes");
@@ -1143,17 +1229,15 @@ inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, neko_luabind_Ty
 }
 
 template <>
-inline neko_luabind_Typeinfo neko_luabind_typeinfo(lua_State *L, const char *name) {
-    return neko_luabind_typeinfo(L, neko_luabind_type_find(L, name));
+inline LuaTypeinfo GetLuaTypeinfo(lua_State *L, const char *name) {
+    return GetLuaTypeinfo(L, TypeFind(L, name));
 }
 
 #define neko_luabind_push(L, type, c_in) neko_luabind_push_type(L, neko_luabind_type(L, type), c_in)
 #define neko_luabind_to(L, type, c_out, index) neko_luabind_to_type(L, neko_luabind_type(L, type), c_out, index)
 
-int neko_luabind_push_type(lua_State *L, neko_luabind_Type type, const void *c_in);
-void neko_luabind_to_type(lua_State *L, neko_luabind_Type type, void *c_out, int index);
-
-#define LUAA_INVALID_MEMBER_NAME NULL
+int neko_luabind_push_type(lua_State *L, LuaTypeid type, const void *c_in);
+void neko_luabind_to_type(lua_State *L, LuaTypeid type, void *c_out, int index);
 
 #define neko_lua_enum_value_name(L, type, value, name)         \
     const type __neko_lua_enum_value_temp_##value[] = {value}; \
@@ -1171,57 +1255,20 @@ void neko_luabind_to_type(lua_State *L, neko_luabind_Type type, void *c_out, int
 #define neko_lua_enum_registered(L, type) neko_lua_enum_registered_type(L, neko_luabind_type(L, type))
 #define neko_lua_enum_next_value_name(L, type, member) neko_lua_enum_next_value_name_type(L, neko_luabind_type(L, type), member)
 
-void neko_lua_enum_type(lua_State *L, neko_luabind_Type type, size_t size);
-void neko_lua_enum_value_type(lua_State *L, neko_luabind_Type type, const void *value, const char *name);
-int neko_lua_enum_push_type(lua_State *L, neko_luabind_Type type, const void *c_in);
-void neko_lua_enum_to_type(lua_State *L, neko_luabind_Type type, void *c_out, int index);
-bool neko_lua_enum_has_value_type(lua_State *L, neko_luabind_Type type, const void *value);
-bool neko_lua_enum_has_name_type(lua_State *L, neko_luabind_Type type, const char *name);
-bool neko_lua_enum_registered_type(lua_State *L, neko_luabind_Type type);
-const char *neko_lua_enum_next_value_name_type(lua_State *L, neko_luabind_Type type, const char *member);
-
-struct DummyFlag {};
-template <typename Enum, typename T, Enum enumValue>
-inline int get_enum_value(std::map<int, std::string> &values) {
-#if defined _MSC_VER && !defined __clang__
-    std::string func(__FUNCSIG__);
-    std::string mark = "DummyFlag";
-    auto pos = func.find(mark) + mark.size();
-    std::string enumStr = func.substr(pos);
-
-    auto start = enumStr.find_first_not_of(", ");
-    auto end = enumStr.find('>');
-    if (start != enumStr.npos && end != enumStr.npos && enumStr[start] != '(') {
-        enumStr = enumStr.substr(start, end - start);
-        values.insert({(int)enumValue, enumStr});
-    }
-
-#else  // gcc, clang
-    std::string func(__PRETTY_FUNCTION__);
-    std::string mark = "enumValue = ";
-    auto pos = func.find(mark) + mark.size();
-    std::string enumStr = func.substr(pos, func.size() - pos - 1);
-    char ch = enumStr[0];
-    if (!(ch >= '0' && ch <= '9') && ch != '(') values.insert({(int)enumValue, enumStr});
-#endif
-    return 0;
-}
-
-template <typename Enum, int min_value, int... ints>
-void guess_enum_range(std::map<int, std::string> &values, const std::integer_sequence<int, ints...> &) {
-    auto dummy = {get_enum_value<Enum, DummyFlag, (Enum)(ints + min_value)>(values)...};
-}
-
-template <typename Enum, int... ints>
-void guess_enum_bit_range(std::map<int, std::string> &values, const std::integer_sequence<int, ints...> &) {
-    auto dummy = {get_enum_value<Enum, DummyFlag, (Enum)0>(values), get_enum_value<Enum, DummyFlag, (Enum)(1 << (int)ints)>(values)...};
-}
+void neko_lua_enum_type(lua_State *L, LuaTypeid type, size_t size);
+void neko_lua_enum_value_type(lua_State *L, LuaTypeid type, const void *value, const char *name);
+int neko_lua_enum_push_type(lua_State *L, LuaTypeid type, const void *c_in);
+void neko_lua_enum_to_type(lua_State *L, LuaTypeid type, void *c_out, int index);
+bool neko_lua_enum_has_value_type(lua_State *L, LuaTypeid type, const void *value);
+bool neko_lua_enum_has_name_type(lua_State *L, LuaTypeid type, const char *name);
+bool neko_lua_enum_registered_type(lua_State *L, LuaTypeid type);
+const char *neko_lua_enum_next_value_name_type(lua_State *L, LuaTypeid type, const char *member);
 
 template <typename Enum, int min_value = -64, int max_value = 64>
 void LuaEnum(lua_State *L) {
     std::map<int, std::string> values;
-    guess_enum_range<Enum, min_value>(values, std::make_integer_sequence<int, max_value - min_value>());
-    guess_enum_bit_range<Enum>(values, std::make_integer_sequence<int, 32>());
+    reflection::guess_enum_range<Enum, min_value>(values, std::make_integer_sequence<int, max_value - min_value>());
+    reflection::guess_enum_bit_range<Enum>(values, std::make_integer_sequence<int, 32>());
 
     neko_lua_enum_type(L, neko_luabind_type(L, Enum), sizeof(Enum));
 
@@ -1490,35 +1537,6 @@ T &newudata(lua_State *L, Args &&...args) {
 template <typename T>
 T &checkudata(lua_State *L, int arg, const_str tname = reflection::name_v<T>.data()) {
     return *udata_align<T>(luaL_checkudata(L, arg, tname));
-}
-
-template <typename T>
-void checktable_refl(lua_State *L, const_str tname, T &&v) {
-
-#define FUCK_TYPES() i32, u32, bool, f32, bool, const_str, String
-
-    if (lua_getfield(L, -1, tname) == LUA_TNIL) {
-        console_log("[exception] no %s table", tname);
-    }
-    if (lua_istable(L, -1)) {
-        auto f = [&L](std::string_view name, neko::reflection::Any &value) {
-            static_assert(std::is_lvalue_reference_v<decltype(value)>);
-            if (lua_getfield(L, -1, std::string(name).c_str()) != LUA_TNIL) {
-                auto ff = [&]<typename S>(const_str name, neko::reflection::Any &var, S &t) {
-                    if (value.GetType() == neko::reflection::type_of<S>()) {
-                        S s = neko_lua_to<std::remove_reference_t<S>>(L, -1);
-                        value.cast<S>() = s;
-                    }
-                };
-                std::apply([&](auto &&...args) { (ff(std::string(name).c_str(), value, args), ...); }, std::tuple<FUCK_TYPES()>());
-            }
-            lua_pop(L, 1);
-        };
-        v.foreach (f);
-    } else {
-        console_log("[exception] no %s table", tname);
-    }
-    lua_pop(L, 1);
 }
 
 }  // namespace neko::lua

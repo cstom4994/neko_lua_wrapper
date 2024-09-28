@@ -286,6 +286,8 @@ int main() {
         TestVec4_.print();
     }
 
+    std::cout << neko::reflection::GetTypeName<TestStruct4>() << '\n';
+
     lua_run_string(L, R"(
         print("Hello NekoLua!")
         print(TestAssetKind_1("TestEnum_A"))
@@ -323,14 +325,14 @@ int main() {
     // luaL_dostring(L, "t = {x = 10, y = 'hello', z = {a = 1, b = 2}}");
     // lua_getglobal(L, "t");
 
-    auto PrintTypeinfo = [](neko_luabind_Typeinfo ts) {
+    auto PrintTypeinfo = [](LuaTypeinfo ts) {
         auto [a, b] = ts;
         std::cout << ts.name << ' ' << ts.size << '\n';
     };
 
-    neko_luabind_Type f1 = neko_luabind_type_find(L, "TestEnum");
-    PrintTypeinfo(neko_luabind_typeinfo(L, f1));
-    PrintTypeinfo(neko_luabind_typeinfo(L, "TestEnum"));
+    LuaTypeid f1 = TypeFind(L, "TestEnum");
+    PrintTypeinfo(GetLuaTypeinfo(L, f1));
+    PrintTypeinfo(GetLuaTypeinfo(L, "TestEnum"));
 
     TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
     lua2struct::pack(L, TestStruct3);
