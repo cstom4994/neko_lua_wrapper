@@ -583,7 +583,7 @@ int __neko_bind_callback_call(lua_State *L) {
     return shortest_;
 }
 
-int __neko_bind_nameof(lua_State *L) {
+int l_nameof(lua_State *L) {
     int const _what{lua_gettop(L)};
     if (_what > 1) {
         luaL_argerror(L, _what, "too many arguments.");

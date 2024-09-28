@@ -125,15 +125,15 @@ void luax_new_userdata(lua_State *L, T data, const char *tname) {
 
 int __neko_bind_callback_save(lua_State *L);
 int __neko_bind_callback_call(lua_State *L);
-int __neko_bind_nameof(lua_State *L);
+int l_nameof(lua_State *L);
 
 template <typename T>
 struct LuaStack;
 
 template <>
 struct LuaStack<lua_CFunction> {
-    static void Push(lua_State *L, lua_CFunction f) { lua_pushcfunction(L, f); }
-    static lua_CFunction Get(lua_State *L, int index) { return lua_tocfunction(L, index); }
+    static inline void Push(lua_State *L, lua_CFunction f) { lua_pushcfunction(L, f); }
+    static inline lua_CFunction Get(lua_State *L, int index) { return lua_tocfunction(L, index); }
 };
 
 template <>
@@ -607,6 +607,23 @@ inline LuaRef LuaRefBase::Cast() {
     return LuaRef(L, FromStackIndex());
 }
 
+template <lua_CFunction func>
+int Wrap(lua_State *L) {
+    int result = 0;
+    try {
+        result = func(L);
+    }
+    // 将带有描述的异常转换为 lua_error
+    catch (std::exception &e) {
+        luaL_error(L, e.what());
+    }
+    // 重新抛出任何其他异常 (例如lua_error)
+    catch (...) {
+        throw;
+    }
+    return result;
+}
+
 struct LuaVM {
 
     struct Tools {
@@ -740,6 +757,14 @@ struct LuaVM {
         lua_newtable(L);
         lua_setfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_values");
 
+        luaL_Reg builtin_funcs[] = {
+                {"nameof", Wrap<l_nameof>},
+        };
+
+        for (auto f : builtin_funcs) {
+            lua_register(L, f.name, f.func);
+        }
+
         this->L = L;
 
         return L;
@@ -842,8 +867,8 @@ int vfs_lua_loader(lua_State *L);
 #define LUASTRUCT_OPTIONAL 0
 
 #define IS_STRUCT(L, index, type) LuaStructIs(L, #type, index)
-#define CHECK_STRUCT(L, index, type) (LuaStructTodata<type>(L, #type, index, LUASTRUCT_REQUIRED))
-#define OPTIONAL_STRUCT(L, index, type) (LuaStructTodata<type>(L, #type, index, LUASTRUCT_OPTIONAL))
+#define CHECK_STRUCT(L, index, type) (LuaStructTodata<type>(L, index, LUASTRUCT_REQUIRED))
+#define OPTIONAL_STRUCT(L, index, type) (LuaStructTodata<type>(L, index, LUASTRUCT_OPTIONAL))
 
 #define PUSH_STRUCT(L, type, value)           \
     do {                                      \
@@ -864,7 +889,7 @@ struct LUASTRUCT_CDATA {
 };
 
 template <typename T>
-auto LuaStructTodata(lua_State *L, const char *metatable, int index, int required) -> T * {
+auto LuaStructTodata_w(lua_State *L, const char *metatable, int index, int required) -> T * {
     if (required == LUASTRUCT_OPTIONAL && lua_isnoneornil(L, index)) {
         return NULL;
     }
@@ -874,6 +899,12 @@ auto LuaStructTodata(lua_State *L, const char *metatable, int index, int require
     } else {
         return *((T **)(reference + 1));
     }
+}
+
+template <typename T>
+auto LuaStructTodata(lua_State *L, int index, int required) -> T * {
+    const char *typeName = nameof::nameof_short_type<T>().data();
+    return LuaStructTodata_w<T>(L, typeName, index, LUASTRUCT_REQUIRED);
 }
 
 template <typename T>
@@ -953,71 +984,6 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
             1);
     lua_setfield(L, -2, "__gc");
 
-    lua_pushlightuserdata(L, (void *)fafunc);
-    lua_pushcclosure(
-            L,
-            [](lua_State *L) -> int {
-                fieldaccess_func func = (fieldaccess_func)lua_touserdata(L, lua_upvalueindex(1));
-                return func(L, 1, 0);
-            },
-            1);
-    lua_setfield(L, -2, "__index");
-
-    lua_pushlightuserdata(L, (void *)fafunc);
-    lua_pushcclosure(
-            L,
-            [](lua_State *L) -> int {
-                fieldaccess_func func = (fieldaccess_func)lua_touserdata(L, lua_upvalueindex(1));
-                return func(L, 1, 1);
-            },
-            1);
-    lua_setfield(L, -2, "__newindex");
-
-    lua_pop(L, 1);
-}
-
-template <typename T>
-inline void LuaStructCreate2(lua_State *L, const char *fieldName, const char *type_name, size_t type_size, T fafunc) {
-
-    using fieldaccess_func = T;
-
-    // auto _new = std::bind(LuaStructNew, std::placeholders::_1, type_name, type_size);
-
-    if (fieldName) {
-        lua_createtable(L, 0, 0);
-        // lua_pushinteger(L, type_size);
-        // lua_setfield(L, -2, "type_size");
-        // lua_pushstring(L, type_name);
-        // lua_setfield(L, -2, "type_name");
-
-        lua_pushinteger(L, type_size);
-        lua_pushstring(L, type_name);
-
-        lua_pushcclosure(
-                L,
-                [](lua_State *L) -> int {
-                    size_t _type_size = lua_tointeger(L, lua_upvalueindex(1));
-                    const char *_type_name = lua_tostring(L, lua_upvalueindex(2));
-                    return LuaStructNew(L, _type_name, _type_size);
-                },
-                2);
-        lua_setfield(L, -2, "new");
-        lua_setfield(L, -2, fieldName);
-    }
-
-    // 创建实例元表
-    luaL_newmetatable(L, type_name);
-
-    lua_pushstring(L, type_name);
-    lua_pushcclosure(
-            L,
-            [](lua_State *L) -> int {
-                const char *_type_name = lua_tostring(L, lua_upvalueindex(1));
-                return LuaStructGC(L, _type_name);
-            },
-            1);
-    lua_setfield(L, -2, "__gc");
-
     lua_pushboolean(L, 0);
     lua_pushcclosure(L, fafunc, 1);
     lua_setfield(L, -2, "__index");
@@ -1029,34 +995,8 @@ inline void LuaStructCreate2(lua_State *L, const char *fieldName, const char *ty
     lua_pop(L, 1);
 }
 
-#define LUASTRUCT_BEGIN(type)                                        \
-    static int type##_fieldaccess(lua_State *L, int index, int set); \
-    LUASTRUCT_CREATE(type)                                           \
-    LUASTRUCT_FIELDACCESS_BEGIN(type)
-
-#define LUASTRUCT_END LUASTRUCT_FIELDACCESS_END
-
-#define LUASTRUCT_CREATE(type) \
-    static void type##_create(lua_State *L, const char *fieldName) { LuaStructCreate(L, fieldName, #type, sizeof(type), type##_fieldaccess); }
-
-#define LUASTRUCT_FIELDACCESS_BEGIN(type)                             \
-    static int type##_fieldaccess(lua_State *L, int index, int set) { \
-        static const char *typeName = #type;                          \
-        type *data = CHECK_STRUCT(L, index, type);                    \
-        size_t length = 0;                                            \
-        const char *field = LuaStructFieldname(L, index + 1, &length);
-
-#define LUASTRUCT_FIELD(name, type)                                                      \
-    if (strncmp(#name, field, length) == 0) {                                            \
-        return LuaStructAccess<type>::Get(L, #name, &data->name, index, set, index + 2); \
-    }
-
-#define LUASTRUCT_FIELDACCESS_END                                 \
-    return luaL_error(L, "Invalid field %s.%s", typeName, field); \
-    }
-
 template <typename T, std::size_t I>
-int LUASTRUCT_FIELD_W(lua_State *L, const char *field, int set, T &v) {
+int LuaStructField_w(lua_State *L, const char *typeName, const char *field, int set, T &v) {
 
     int index = 1;
 
@@ -1065,57 +1005,41 @@ int LUASTRUCT_FIELD_W(lua_State *L, const char *field, int set, T &v) {
         // lua_getfield(L, arg, name.data());
 
         if (std::string_view(name) == field) {
+            printf("LUASTRUCT_FIELD_W %s.%s\n", typeName, field);
             auto &af = lua2struct::reflection::field_access<I>(v);
             return LuaStructAccess<lua2struct::reflection::field_type<T, I>>::Get(L, field, &af, index, set, index + 2);
         }
 
-        printf("LUASTRUCT_FIELD_W %s %s\n", name.data(), field);
-
         // lua2struct::reflection::field_access<I>(v) = unpack<lua2struct::reflection::field_type<D, I>>(L, -1);
         // lua_pop(L, 1);
-        return LUASTRUCT_FIELD_W<T, I + 1>(L, field, set, v);
+        return LuaStructField_w<T, I + 1>(L, typeName, field, set, v);
     }
 
-    return luaL_error(L, "Invalid field %s", field);
+    return luaL_error(L, "Invalid field %s.%s", typeName, field);
 };
 
 template <typename T>
-void LUASTRUCT_CREATE_NEW(lua_State *L, const char *fieldName) {
+void LuaStruct(lua_State *L, const char *fieldName) {
 
     auto fieldaccess = [](lua_State *L) -> int {
         int index = 1;
         int set = lua_toboolean(L, lua_upvalueindex(1));
 
-        printf("fieldaccess %d\n", set);
+        // printf("fieldaccess %d\n", set);
 
         const char *typeName = nameof::nameof_short_type<T>().data();
-        T *data = (LuaStructTodata<T>(L, typeName, index, LUASTRUCT_REQUIRED));
+        T *data = (LuaStructTodata<T>(L, index, LUASTRUCT_REQUIRED));
         size_t length = 0;
         const char *field = LuaStructFieldname(L, index + 1, &length);
 
-        printf("fieldaccess %s\n", field);
+        // printf("fieldaccess %s\n", field);
 
-        return LUASTRUCT_FIELD_W<T, 0>(L, field, set, *data);
+        return LuaStructField_w<T, 0>(L, typeName, field, set, *data);
     };
 
-    LuaStructCreate2(L, fieldName, nameof::nameof_short_type<T>().data(), sizeof(T), fieldaccess);
-}
+    LuaStructCreate(L, fieldName, nameof::nameof_short_type<T>().data(), sizeof(T), fieldaccess);
 
-template <lua_CFunction func>
-int wrap(lua_State *L) {
-    int result = 0;
-    try {
-        result = func(L);
-    }
-    // 将带有描述的异常转换为 lua_error
-    catch (std::exception &e) {
-        luaL_error(L, e.what());
-    }
-    // 重新抛出任何其他异常 (例如lua_error)
-    catch (...) {
-        throw;
-    }
-    return result;
+    // lua_setglobal(L, fieldName);
 }
 
 // enum
@@ -1598,7 +1522,5 @@ void checktable_refl(lua_State *L, const_str tname, T &&v) {
 }
 
 }  // namespace neko::lua
-
-void createStructTables(lua_State *L);
 
 #endif

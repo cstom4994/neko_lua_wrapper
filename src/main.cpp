@@ -181,23 +181,6 @@ struct TestStruct4 {
     // void print() { std::cout << x1 << ' ' << x2 << std::endl; }
 };
 
-LUASTRUCT_BEGIN(TestStruct)
-LUASTRUCT_FIELD(x, float)
-LUASTRUCT_FIELD(y, float)
-LUASTRUCT_FIELD(z, float)
-LUASTRUCT_FIELD(w, float)
-LUASTRUCT_END
-
-LUASTRUCT_BEGIN(TestStruct2)
-LUASTRUCT_FIELD(x1, int)
-LUASTRUCT_FIELD(x2, int)
-LUASTRUCT_END
-
-LUASTRUCT_BEGIN(TestStruct3)
-LUASTRUCT_FIELD(s1, TestStruct)
-LUASTRUCT_FIELD(s2, TestStruct2)
-LUASTRUCT_END
-
 enum TestEnum : int {
     TestEnum_A,
     TestEnum_B,
@@ -246,19 +229,6 @@ static int LuaStruct_test_4(lua_State *L) {
     return 1;
 }
 
-void createStructTables(lua_State *L) {
-#define XX(T) T##_create(L, #T)
-
-    XX(TestStruct);
-    XX(TestStruct2);
-    XX(TestStruct3);
-
-    LUASTRUCT_CREATE_NEW<TestStruct4>(L, "TestStruct4");
-
-    // ARRAY_uchar8_create(L);
-#undef XX
-}
-
 int main() {
 
     LuaVM vm;
@@ -275,16 +245,18 @@ int main() {
             });
 
     lua_newtable(L);
-    createStructTables(L);
+    LuaStruct<TestStruct>(L, "TestStruct");
+    LuaStruct<TestStruct2>(L, "TestStruct2");
+    LuaStruct<TestStruct3>(L, "TestStruct3");
+    LuaStruct<TestStruct4>(L, "TestStruct4");
     lua_setglobal(L, "LuaStruct");
 
     LuaEnum<TestEnum>(L);
 
-    luaL_Reg lib[] = {{"LuaStruct_test_1", wrap<LuaStruct_test_1>},
-                      {"LuaStruct_test_2", wrap<LuaStruct_test_2>},
-                      {"LuaStruct_test_3", wrap<LuaStruct_test_3>},
-                      {"LuaStruct_test_4", wrap<LuaStruct_test_4>},
-                      {"nameof", wrap<__neko_bind_nameof>},
+    luaL_Reg lib[] = {{"LuaStruct_test_1", Wrap<LuaStruct_test_1>},
+                      {"LuaStruct_test_2", Wrap<LuaStruct_test_2>},
+                      {"LuaStruct_test_3", Wrap<LuaStruct_test_3>},
+                      {"LuaStruct_test_4", Wrap<LuaStruct_test_4>},
                       {"TestAssetKind_1",
                        +[](lua_State *L) {
                            TestEnum type_val;
