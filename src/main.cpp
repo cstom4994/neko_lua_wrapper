@@ -265,10 +265,16 @@ int main() {
                            return 1;
                        }},
 
-                      {"TestAssetKind_2", +[](lua_State *L) {
+                      {"TestAssetKind_2",
+                       +[](lua_State *L) {
                            TestEnum type_val = (TestEnum)lua_tointeger(L, 1);
                            neko_luabind_push(L, TestEnum, &type_val);
                            return 1;
+                       }},
+                      {"TestAssetKind_3", +[](lua_State *L) {
+                           auto type_val = Get<TestEnum>(L, 1);
+                           std::cout << "TestAssetKind_3 " << type_val << std::endl;
+                           return 0;
                        }}};
 
     for (auto f : lib) {
@@ -288,10 +294,16 @@ int main() {
 
     std::cout << neko::reflection::GetTypeName<TestStruct4>() << '\n';
 
+    std::cout << LuaEnumHas<TestEnum>(L, "TestEnum_D") << '\n';
+    std::cout << LuaEnumHas<TestEnum>(L, "TestEnum_C") << '\n';
+    std::cout << LuaEnumHas<TestEnum>(L, 3) << '\n';
+    std::cout << LuaEnumHas<TestEnum>(L, 2) << '\n';
+
     lua_run_string(L, R"(
         print("Hello NekoLua!")
         print(TestAssetKind_1("TestEnum_A"))
         print(TestAssetKind_2(2))
+        print(TestAssetKind_3("TestEnum_B"))
 
         test_struct = LuaStruct.TestStruct.new()
         table_show(test_struct.x,test_struct.y,test_struct.z,test_struct.w)

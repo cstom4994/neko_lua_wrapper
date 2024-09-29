@@ -1133,8 +1133,6 @@ void LuaStruct(lua_State *L, const char *fieldName) {
 
 // enum
 
-#define neko_luabind_type(L, type) neko_luabind_type_add<type>(L)
-
 enum { NEKOLUA_INVALID_TYPE = -1 };
 
 typedef lua_Integer LuaTypeid;
@@ -1147,7 +1145,7 @@ struct LuaTypeinfo {
 };
 
 template <typename T>
-LuaTypeid neko_luabind_type_add(lua_State *L) {
+LuaTypeid LuaType(lua_State *L) {
 
     const char *type = reflection::GetTypeName<T>();
     constexpr size_t size = sizeof(T);
@@ -1233,36 +1231,178 @@ inline LuaTypeinfo GetLuaTypeinfo(lua_State *L, const char *name) {
     return GetLuaTypeinfo(L, TypeFind(L, name));
 }
 
-#define neko_luabind_push(L, type, c_in) neko_luabind_push_type(L, neko_luabind_type(L, type), c_in)
-#define neko_luabind_to(L, type, c_out, index) neko_luabind_to_type(L, neko_luabind_type(L, type), c_out, index)
+#define neko_luabind_push(L, type, c_in) LuaTypePush(L, LuaType<type>(L), c_in)
+#define neko_luabind_to(L, type, c_out, index) LuaTypeTo(L, LuaType<type>(L), c_out, index)
 
-int neko_luabind_push_type(lua_State *L, LuaTypeid type, const void *c_in);
-void neko_luabind_to_type(lua_State *L, LuaTypeid type, void *c_out, int index);
-
-#define neko_lua_enum_value_name(L, type, value, name)         \
-    const type __neko_lua_enum_value_temp_##value[] = {value}; \
-    neko_lua_enum_value_type(L, neko_luabind_type(L, type), __neko_lua_enum_value_temp_##value, name)
-
-#define neko_lua_enum_push(L, type, c_in) neko_lua_enum_push_type(L, neko_luabind_type(L, type), c_in)
-#define neko_lua_enum_to(L, type, c_out, index) neko_lua_enum_to_type(L, neko_luabind_type(L, type), c_out, index)
+int LuaTypePush(lua_State *L, LuaTypeid type, const void *c_in);
+void LuaTypeTo(lua_State *L, LuaTypeid type, void *c_out, int index);
 
 #define neko_lua_enum_has_value(L, type, value)                \
     const type __neko_lua_enum_value_temp_##value[] = {value}; \
-    neko_lua_enum_has_value_type(L, neko_luabind_type(L, type), __neko_lua_enum_value_temp_##value)
+    neko_lua_enum_has_value_type(L, LuaType<type>(L), __neko_lua_enum_value_temp_##value)
 
-#define neko_lua_enum_has_name(L, type, name) neko_lua_enum_has_name_type(L, neko_luabind_type(L, type), name)
+template <typename T, typename V>
+    requires std::is_same_v<T, LuaTypeid>
+inline bool LuaEnumHas(lua_State *L, T type, V v) {
+    using VT = std::remove_cv_t<V>;
+    if constexpr (std::is_integral_v<VT>) {
+        lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_values");
+        lua_pushinteger(L, type);
+        lua_gettable(L, -2);
 
-#define neko_lua_enum_registered(L, type) neko_lua_enum_registered_type(L, neko_luabind_type(L, type))
-#define neko_lua_enum_next_value_name(L, type, member) neko_lua_enum_next_value_name_type(L, neko_luabind_type(L, type), member)
+        if (!lua_isnil(L, -1)) {
 
-void neko_lua_enum_type(lua_State *L, LuaTypeid type, size_t size);
-void neko_lua_enum_value_type(lua_State *L, LuaTypeid type, const void *value, const char *name);
-int neko_lua_enum_push_type(lua_State *L, LuaTypeid type, const void *c_in);
-void neko_lua_enum_to_type(lua_State *L, LuaTypeid type, void *c_out, int index);
-bool neko_lua_enum_has_value_type(lua_State *L, LuaTypeid type, const void *value);
-bool neko_lua_enum_has_name_type(lua_State *L, LuaTypeid type, const char *name);
-bool neko_lua_enum_registered_type(lua_State *L, LuaTypeid type);
-const char *neko_lua_enum_next_value_name_type(lua_State *L, LuaTypeid type, const char *member);
+            lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_sizes");
+            lua_pushinteger(L, type);
+            lua_gettable(L, -2);
+            size_t size = lua_tointeger(L, -1);
+            lua_pop(L, 2);
+
+            // lua_Integer lvalue = 0;
+            // memcpy(&lvalue, v, size);
+
+            lua_pushinteger(L, v);
+            lua_gettable(L, -2);
+
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 3);
+                return false;
+            } else {
+                lua_pop(L, 3);
+                return true;
+            }
+        }
+        lua_pop(L, 2);
+        lua_pushfstring(L, "neko_lua_enum_has_value: Enum '%s' not registered!", GetLuaTypeinfo(L, type).name);
+        lua_error(L);
+        return false;
+    } else if constexpr (std::is_same_v<std::decay_t<VT>, char const *>) {
+        lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums");
+        lua_pushinteger(L, type);
+        lua_gettable(L, -2);
+
+        if (!lua_isnil(L, -1)) {
+
+            lua_getfield(L, -1, v);
+
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 3);
+                return false;
+            } else {
+                lua_pop(L, 3);
+                return true;
+            }
+        }
+
+        lua_pop(L, 2);
+        lua_pushfstring(L, "LuaEnumHas: Enum '%s' not registered!", GetLuaTypeinfo(L, type).name);
+        lua_error(L);
+        return false;
+    } else {
+        static_assert(!v, "LuaEnumHas type assert");
+    }
+}
+
+template <typename T, typename V>
+inline bool LuaEnumHas(lua_State *L, V v) {
+    return LuaEnumHas(L, LuaType<T>(L), v);
+}
+
+inline void LuaEnumAddType(lua_State *L, LuaTypeid type, size_t size) {
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums");
+    lua_pushinteger(L, type);
+    lua_newtable(L);
+    lua_settable(L, -3);
+    lua_pop(L, 1);
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_values");
+    lua_pushinteger(L, type);
+    lua_newtable(L);
+    lua_settable(L, -3);
+    lua_pop(L, 1);
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_sizes");
+    lua_pushinteger(L, type);
+    lua_pushinteger(L, size);
+    lua_settable(L, -3);
+    lua_pop(L, 1);
+}
+
+inline void LuaEnumAddValue(lua_State *L, LuaTypeid type, const void *value, const char *name) {
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums");
+    lua_pushinteger(L, type);
+    lua_gettable(L, -2);
+
+    if (!lua_isnil(L, -1)) {
+
+        lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_sizes");
+        lua_pushinteger(L, type);
+        lua_gettable(L, -2);
+        size_t size = lua_tointeger(L, -1);
+        lua_pop(L, 2);
+
+        lua_newtable(L);
+
+        lua_Integer lvalue = 0;
+        memcpy(&lvalue, value, size);
+
+        lua_pushinteger(L, lvalue);
+        lua_setfield(L, -2, "value");
+
+        lua_pushstring(L, name);
+        lua_setfield(L, -2, "name");
+
+        lua_setfield(L, -2, name);
+
+        lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_values");
+        lua_pushinteger(L, type);
+        lua_gettable(L, -2);
+        lua_pushinteger(L, lvalue);
+        lua_getfield(L, -4, name);
+        lua_settable(L, -3);
+
+        lua_pop(L, 4);
+        return;
+    }
+
+    lua_pop(L, 2);
+    lua_pushfstring(L, "LuaEnumAddValue: Enum '%s' not registered!", GetLuaTypeinfo(L, type).name);
+    lua_error(L);
+}
+
+inline bool LuaTypeIsEnum(lua_State *L, LuaTypeid type) {
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums");
+    lua_pushinteger(L, type);
+    lua_gettable(L, -2);
+    bool reg = !lua_isnil(L, -1);
+    lua_pop(L, 2);
+    return reg;
+}
+
+template <typename T>
+inline void Push(lua_State *L, T v) {
+    LuaStack<T>::Push(L, v);
+}
+
+template <typename T>
+inline T Get(lua_State *L, int index) {
+    return LuaStack<T>::Get(L, index);
+}
+
+// template <typename T>
+//     requires std::is_enum_v<T>
+// inline void Push(lua_State *L, T v) {
+//     LuaStack<T>::Push(L, v);
+// }
+
+template <typename T>
+    requires std::is_enum_v<T>
+inline auto Get(lua_State *L, int index) -> T {
+    T type_val;
+    neko_luabind_to(L, T, &type_val, index);
+    return type_val;
+}
 
 template <typename Enum, int min_value = -64, int max_value = 64>
 void LuaEnum(lua_State *L) {
@@ -1270,11 +1410,11 @@ void LuaEnum(lua_State *L) {
     reflection::guess_enum_range<Enum, min_value>(values, std::make_integer_sequence<int, max_value - min_value>());
     reflection::guess_enum_bit_range<Enum>(values, std::make_integer_sequence<int, 32>());
 
-    neko_lua_enum_type(L, neko_luabind_type(L, Enum), sizeof(Enum));
-
+    LuaTypeid id = LuaType<Enum>(L);
+    LuaEnumAddType(L, id, sizeof(Enum));
     for (const auto &value : values) {
-        const Enum __neko_lua_enum_value_temp_value[] = {(Enum)value.first};
-        neko_lua_enum_value_type(L, neko_luabind_type(L, Enum), __neko_lua_enum_value_temp_value, value.second.c_str());
+        const Enum enum_value[] = {(Enum)value.first};
+        LuaEnumAddValue(L, id, enum_value, value.second.c_str());
     }
 }
 
