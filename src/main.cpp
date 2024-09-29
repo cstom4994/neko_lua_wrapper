@@ -176,9 +176,8 @@ struct TestStruct3 {
 };
 
 struct TestStruct4 {
-    int x1, x2;
-
-    // void print() { std::cout << x1 << ' ' << x2 << std::endl; }
+    int x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16;
+    int x17, x18;
 };
 
 enum TestEnum : int {
@@ -224,6 +223,8 @@ static int LuaStruct_test_4(lua_State *L) {
 
     v->x1 += 1001;
     v->x2 += 2002;
+    v->x17 += 1777;
+    v->x18 += 1888;
 
     PUSH_STRUCT(L, TestStruct4, *v);
     return 1;
@@ -259,8 +260,7 @@ int main() {
                       {"LuaStruct_test_4", Wrap<LuaStruct_test_4>},
                       {"TestAssetKind_1",
                        +[](lua_State *L) {
-                           TestEnum type_val;
-                           neko_luabind_to(L, TestEnum, &type_val, 1);
+                           auto type_val = Get<TestEnum>(L, 1);
                            lua_pushinteger(L, type_val);
                            return 1;
                        }},
@@ -268,7 +268,7 @@ int main() {
                       {"TestAssetKind_2",
                        +[](lua_State *L) {
                            TestEnum type_val = (TestEnum)lua_tointeger(L, 1);
-                           neko_luabind_push(L, TestEnum, &type_val);
+                           Push<TestEnum>(L, type_val);
                            return 1;
                        }},
                       {"TestAssetKind_3", +[](lua_State *L) {
@@ -325,9 +325,9 @@ int main() {
         table_show(test_struct3_s2.x1,test_struct3_s2.x2)
 
         test_struct4 = LuaStruct.TestStruct4.new()
-        table_show(test_struct4.x1,test_struct4.x2)
+        table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18)
         test_struct4 = LuaStruct_test_4(test_struct4)
-        table_show(test_struct4.x1,test_struct4.x2)
+        table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18)
 
         print(nameof(LuaStruct.TestStruct))
     )");
