@@ -1,17 +1,4 @@
-#include "neko_lua_wrapper.hpp"
-
-#include <assert.h>
-#include <inttypes.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-
-#include <algorithm>
-#include <iostream>
-#include <sstream>
-
+#include "luax.h"
 
 void luax_get(lua_State *L, const_str tb, const_str field) {
     lua_getglobal(L, tb);

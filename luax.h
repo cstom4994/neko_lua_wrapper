@@ -1,9 +1,7 @@
 #ifndef NEKO_LUAX_H
 #define NEKO_LUAX_H
 
-// #include "engine/base.h"
-
-#include "helper.hpp"
+#include "utils.hpp"
 
 // lua
 #include <cstdint>

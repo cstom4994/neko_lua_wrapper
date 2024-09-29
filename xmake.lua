@@ -36,8 +36,8 @@ end
 target("nekolua")
 do
     set_kind("binary")
-    add_headerfiles("src/**.hpp")
-    add_files("src/**.cpp")
+    add_headerfiles("**.hpp")
+    add_files("test.cpp", "luax.cpp")
     add_packages("lua")
 
     add_defines("NEKO_CFFI")

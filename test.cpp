@@ -3,7 +3,7 @@
 #include <string>
 #include <thread>
 
-#include "neko_lua_wrapper.hpp"
+#include "lua_wrapper.hpp"
 
 constexpr static inline const_str table_show_src = R"lua(
 function _table_show(t, name, indent)
@@ -179,6 +179,21 @@ struct TestStruct4 {
     int x17, x18;
 };
 
+struct TestStruct5 {
+    int x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16;
+    int x17, x18;
+
+    void print() {
+        auto [NEKO_PP_PARAMS(x, 18)] = *this;
+        std::tuple tu = {NEKO_PP_PARAMS(x, 18)};
+        [&]<size_t... I>(std::index_sequence<I...>) {
+            std::cout << '[';
+            (..., (std::cout << std::get<I>(tu)));
+            std::cout << "]\n";
+        }(std::make_index_sequence<18>{});
+    }
+};
+
 enum TestEnum : int {
     TestEnum_A,
     TestEnum_B,
@@ -187,45 +202,45 @@ enum TestEnum : int {
 
 static int LuaStruct_test_1(lua_State *L) {
     LuaStackGuard sg(L);
-    TestStruct *v4 = CHECK_STRUCT(L, 1, TestStruct);
-    v4->x += 10.f;
-    v4->y += 10.f;
-    v4->z += 10.f;
-    v4->w += 10.f;
-    PUSH_STRUCT(L, TestStruct, *v4);
+    auto v = LuaGet<TestStruct>(L, 1);
+    v->x += 10.f;
+    v->y += 10.f;
+    v->z += 10.f;
+    v->w += 10.f;
+    LuaPush<TestStruct>(L, *v);
     return 1;
 }
 
 static int LuaStruct_test_2(lua_State *L) {
     LuaStackGuard sg(L);
-    TestStruct2 *v4 = CHECK_STRUCT(L, 1, TestStruct2);
-    v4->x1 += 114.f;
-    v4->x2 += 514.f;
-    PUSH_STRUCT(L, TestStruct2, *v4);
+    auto v = LuaGet<TestStruct2>(L, 1);
+    v->x1 += 114.f;
+    v->x2 += 514.f;
+    LuaPush<TestStruct2>(L, *v);
     return 1;
 }
 
 static int LuaStruct_test_3(lua_State *L) {
     LuaStackGuard sg(L);
-    TestStruct3 *v = CHECK_STRUCT(L, 1, TestStruct3);
+    auto v = LuaGet<TestStruct3>(L, 1);
 
     v->s2.x1 = 666.f;
     v->s2.x2 = 233.f;
 
-    PUSH_STRUCT(L, TestStruct3, *v);
+    LuaPush<TestStruct3>(L, *v);
     return 1;
 }
 
 static int LuaStruct_test_4(lua_State *L) {
     LuaStackGuard sg(L);
-    TestStruct4 *v = CHECK_STRUCT(L, 1, TestStruct4);
+    auto v = LuaGet<TestStruct4>(L, 1);
 
     v->x1 += 1001;
     v->x2 += 2002;
     v->x17 += 1777;
     v->x18 += 1888;
 
-    PUSH_STRUCT(L, TestStruct4, *v);
+    LuaPush<TestStruct4>(L, *v);
     return 1;
 }
 
@@ -290,12 +305,12 @@ int main() {
 
     vm("hello");
 
-    TestStruct TestVec4 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
+    TestStruct5 TestVec4 = {1, 2, 3, 4, 5, 6, 7, 8, 2, 2, 3, 4, 5, 6, 7, 8};
 
     {
         LuaStackGuard sg(L);
-        LuaPush(L, TestVec4);
-        TestStruct TestVec4_ = LuaGet<TestStruct>(L, -1);
+        LuaPush<TestStruct5>(L, TestVec4);
+        auto TestVec4_ = LuaGetRaw<TestStruct5>(L, -1);
         TestVec4_.print();
     }
 
