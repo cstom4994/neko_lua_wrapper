@@ -3,7 +3,6 @@
 #include <string>
 #include <thread>
 
-#include "lua2struct.hpp"
 #include "neko_lua_wrapper.hpp"
 
 constexpr static inline const_str table_show_src = R"lua(
@@ -260,7 +259,7 @@ int main() {
                       {"LuaStruct_test_4", Wrap<LuaStruct_test_4>},
                       {"TestAssetKind_1",
                        +[](lua_State *L) {
-                           auto type_val = Get<TestEnum>(L, 1);
+                           auto type_val = LuaGet<TestEnum>(L, 1);
                            lua_pushinteger(L, type_val);
                            return 1;
                        }},
@@ -268,11 +267,11 @@ int main() {
                       {"TestAssetKind_2",
                        +[](lua_State *L) {
                            TestEnum type_val = (TestEnum)lua_tointeger(L, 1);
-                           Push<TestEnum>(L, type_val);
+                           LuaPush<TestEnum>(L, type_val);
                            return 1;
                        }},
                       {"TestAssetKind_3", +[](lua_State *L) {
-                           auto type_val = Get<TestEnum>(L, 1);
+                           auto type_val = LuaGet<TestEnum>(L, 1);
                            std::cout << "TestAssetKind_3 " << type_val << std::endl;
                            return 0;
                        }}};
@@ -287,8 +286,8 @@ int main() {
 
     {
         LuaStackGuard sg(L);
-        lua2struct::pack(L, TestVec4);
-        TestStruct TestVec4_ = lua2struct::unpack<TestStruct>(L, -1);
+        LuaPush(L, TestVec4);
+        TestStruct TestVec4_ = LuaGet<TestStruct>(L, -1);
         TestVec4_.print();
     }
 
@@ -303,7 +302,7 @@ int main() {
         print("Hello NekoLua!")
         print(TestAssetKind_1("TestEnum_A"))
         print(TestAssetKind_2(2))
-        print(TestAssetKind_3("TestEnum_B"))
+        TestAssetKind_3("TestEnum_B")
 
         test_struct = LuaStruct.TestStruct.new()
         table_show(test_struct.x,test_struct.y,test_struct.z,test_struct.w)
@@ -347,7 +346,7 @@ int main() {
     PrintTypeinfo(GetLuaTypeinfo(L, "TestEnum"));
 
     TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
-    lua2struct::pack(L, TestStruct3);
+    LuaPush(L, TestStruct3);
 
     vm.Fini(L);
 

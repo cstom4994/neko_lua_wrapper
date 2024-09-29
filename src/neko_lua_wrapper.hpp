@@ -321,7 +321,13 @@ bool luax_boolean_field(lua_State *L, i32 arg, const char *key, bool fallback = 
 String luax_check_string(lua_State *L, i32 arg);
 String luax_opt_string(lua_State *L, i32 arg, String def);
 
-void luax_new_class(lua_State *L, const char *mt_name, const luaL_Reg *l);
+inline void luax_new_class(lua_State *L, const char *mt_name, const luaL_Reg *l) {
+    luaL_newmetatable(L, mt_name);
+    luaL_setfuncs(L, l, 0);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
+    lua_pop(L, 1);
+}
 
 enum {
     LUAX_UD_TNAME = 1,
@@ -372,6 +378,24 @@ void luax_new_userdata(lua_State *L, T data, const char *tname) {
 int __neko_bind_callback_save(lua_State *L);
 int __neko_bind_callback_call(lua_State *L);
 int l_nameof(lua_State *L);
+
+namespace detail {
+
+template <typename T, typename I>
+constexpr bool check_integral_limit(I i) {
+    static_assert(std::is_integral_v<I>);
+    static_assert(std::is_integral_v<T>);
+    static_assert(sizeof(I) >= sizeof(T));
+    if constexpr (sizeof(I) == sizeof(T)) {
+        return true;
+    } else if constexpr (std::numeric_limits<I>::is_signed == std::numeric_limits<T>::is_signed) {
+        return i >= std::numeric_limits<T>::lowest() && i <= (std::numeric_limits<T>::max)();
+    } else if constexpr (std::numeric_limits<I>::is_signed) {
+        return static_cast<std::make_unsigned_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_unsigned_t<I>>(i) <= (std::numeric_limits<T>::max)();
+    } else {
+        return static_cast<std::make_signed_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_signed_t<I>>(i) <= (std::numeric_limits<T>::max)();
+    }
+}
 
 template <typename T>
 struct LuaStack;
@@ -556,8 +580,10 @@ struct LuaStack<std::string const &> {
     }
 };
 
+}  // namespace detail
+
 template <typename T>
-T to(lua_State *L, int index) {
+T raw_to(lua_State *L, int index) {
     if constexpr (std::is_integral_v<T>) {
         luaL_argcheck(L, lua_isnumber(L, index), index, "number expected");
         return static_cast<T>(lua_tointeger(L, index));
@@ -580,20 +606,6 @@ T to(lua_State *L, int index) {
     }
 }
 
-template <typename Iterable>
-inline bool equal(lua_State *state, const Iterable &indices) {
-    auto it = indices.begin();
-    auto end = indices.end();
-    if (it == end) return true;
-    int cmp_index = *it++;
-    while (it != end) {
-        int index = *it++;
-        if (!neko_lua_equal(state, cmp_index, index)) return false;
-        cmp_index = index;
-    }
-    return true;
-}
-
 // 自动弹出栈元素 确保数量不变的辅助类
 class LuaStackGuard {
 public:
@@ -613,10 +625,12 @@ private:
 
 struct LuaNil {};
 
+namespace detail {
 template <>
 struct LuaStack<LuaNil> {
     static inline void Push(lua_State *L, LuaNil const &any) { lua_pushnil(L); }
 };
+}  // namespace detail
 
 class LuaRef;
 
@@ -671,7 +685,7 @@ public:
     void Append(T v) const {
         Push();
         size_t len = lua_rawlen(L, -1);
-        LuaStack<T>::Push(L, v);
+        detail::LuaStack<T>::Push(L, v);
         lua_rawseti(L, -2, ++len);
         lua_pop(L, 1);
     }
@@ -680,7 +694,7 @@ public:
     T Cast() {
         LuaStackGuard p(L);
         Push();
-        return LuaStack<T>::Get(L, -1);
+        return detail::LuaStack<T>::Get(L, -1);
     }
 
     template <typename T>
@@ -701,7 +715,7 @@ public:
 
     void Push() const override {
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_ref);
-        LuaStack<K>::Push(L, (K)m_key);
+        detail::LuaStack<K>::Push(L, (K)m_key);
         lua_gettable(L, -2);
         lua_remove(L, -2);
     }
@@ -711,8 +725,8 @@ public:
     LuaTableElement &operator=(T v) {
         LuaStackGuard p(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_ref);
-        LuaStack<K>::Push(L, m_key);
-        LuaStack<T>::Push(L, v);
+        detail::LuaStack<K>::Push(L, m_key);
+        detail::LuaStack<T>::Push(L, v);
         lua_settable(L, -3);
         return *this;
     }
@@ -724,10 +738,12 @@ public:
     }
 };
 
+namespace detail {
 template <typename K>
 struct LuaStack<LuaTableElement<K>> {
     static inline void Push(lua_State *L, LuaTableElement<K> const &e) { e.Push(); }
 };
+}  // namespace detail
 
 class LuaRef : public LuaRefBase {
     friend LuaRefBase;
@@ -808,10 +824,12 @@ public:
     }
 };
 
+namespace detail {
 template <>
 struct LuaStack<LuaRef> {
     static inline void Push(lua_State *L, LuaRef const &r) { r.Push(); }
 };
+}  // namespace detail
 
 template <>
 inline LuaRef const LuaRefBase::operator()() const {
@@ -824,7 +842,7 @@ template <typename... Args>
 inline LuaRef const LuaRefBase::operator()(Args... args) const {
     const int n = sizeof...(Args);
     Push();
-    int dummy[] = {0, ((void)LuaStack<Args>::Push(L, std::forward<Args>(args)), 0)...};
+    int dummy[] = {0, ((void)detail::LuaStack<Args>::Push(L, std::forward<Args>(args)), 0)...};
     std::ignore = dummy;
     luax_pcall(L, n, 1);
     return LuaRef(L, FromStackIndex());
@@ -841,7 +859,7 @@ template <typename... Args>
 inline void LuaRefBase::Call(int ret, Args... args) const {
     const int n = sizeof...(Args);
     Push();
-    int dummy[] = {0, ((void)LuaStack<Args>::Push(L, std::forward<Args>(args)), 0)...};
+    int dummy[] = {0, ((void)detail::LuaStack<Args>::Push(L, std::forward<Args>(args)), 0)...};
     std::ignore = dummy;
     luax_pcall(L, n, ret);
     return;  // 如果有返回值保留在 Lua 堆栈中
@@ -1178,10 +1196,10 @@ struct LuaStructAccess {
             }
         } else {
             if (set) {
-                *data = static_cast<T>(LuaStack<T>::Get(L, valueIndex));
+                *data = static_cast<T>(detail::LuaStack<T>::Get(L, valueIndex));
                 return 0;
             } else {
-                LuaStack<T>::Push(L, *data);
+                detail::LuaStack<T>::Push(L, *data);
                 return 1;
             }
         }
@@ -1388,9 +1406,6 @@ inline LuaTypeinfo GetLuaTypeinfo(lua_State *L, const char *name) {
     return GetLuaTypeinfo(L, TypeFind(L, name));
 }
 
-int LuaTypePush(lua_State *L, LuaTypeid type, const void *c_in);
-void LuaTypeTo(lua_State *L, LuaTypeid type, void *c_out, int index);
-
 #define neko_lua_enum_has_value(L, type, value)                \
     const type __neko_lua_enum_value_temp_##value[] = {value}; \
     neko_lua_enum_has_value_type(L, LuaType<type>(L), __neko_lua_enum_value_temp_##value)
@@ -1534,30 +1549,6 @@ inline bool LuaTypeIsEnum(lua_State *L, LuaTypeid type) {
     return reg;
 }
 
-template <typename T>
-inline void Push(lua_State *L, T v) {
-    LuaStack<T>::Push(L, v);
-}
-
-template <typename T>
-inline T Get(lua_State *L, int index) {
-    return LuaStack<T>::Get(L, index);
-}
-
-template <typename T>
-    requires std::is_enum_v<T>
-inline void Push(lua_State *L, T v) {
-    LuaTypePush(L, LuaType<T>(L), &v);
-}
-
-template <typename T>
-    requires std::is_enum_v<T>
-inline auto Get(lua_State *L, int index) -> T {
-    T type_val;
-    LuaTypeTo(L, LuaType<T>(L), &type_val, index);
-    return type_val;
-}
-
 template <typename Enum, int min_value = -64, int max_value = 64>
 void LuaEnum(lua_State *L) {
     std::map<int, std::string> values;
@@ -1570,6 +1561,251 @@ void LuaEnum(lua_State *L) {
         const Enum enum_value[] = {(Enum)value.first};
         LuaEnumAddValue(L, id, enum_value, value.second.c_str());
     }
+}
+
+template <typename T>
+inline void LuaPush(lua_State *L, const T &v) {
+    detail::LuaStack<T>::Push(L, v);
+}
+
+template <typename T>
+inline T LuaGet(lua_State *L, int index) {
+    return detail::LuaStack<T>::Get(L, index);
+}
+
+template <typename T>
+    requires std::is_enum_v<T>
+inline void LuaPush(lua_State *L, const T &v) {
+    LuaTypePush(L, LuaType<T>(L), &v);
+}
+
+template <typename T>
+    requires std::is_enum_v<T>
+inline auto LuaGet(lua_State *L, int index) -> T {
+    T type_val;
+    LuaTypeTo(L, LuaType<T>(L), &type_val, index);
+    return type_val;
+}
+
+template <typename T, std::size_t I>
+void LuaRawStructGet(lua_State *L, int arg, T &v);
+
+template <typename T>
+    requires std::is_pointer_v<T>
+T LuaGet(lua_State *L, int arg) {
+    luaL_checktype(L, arg, LUA_TLIGHTUSERDATA);
+    return static_cast<T>(lua_touserdata(L, arg));
+}
+
+template <>
+inline std::string_view LuaGet<std::string_view>(lua_State *L, int arg) {
+    size_t sz = 0;
+    const char *str = luaL_checklstring(L, arg, &sz);
+    return std::string_view(str, sz);
+}
+
+template <typename T>
+    requires std::is_aggregate_v<T>
+T LuaGet(lua_State *L, int arg) {
+    T v;
+    LuaRawStructGet<T, 0>(L, arg, v);
+    return v;
+}
+
+template <template <typename...> class Template, typename Class>
+struct is_instantiation : std::false_type {};
+template <template <typename...> class Template, typename... Args>
+struct is_instantiation<Template, Template<Args...>> : std::true_type {};
+template <typename Class, template <typename...> class Template>
+concept is_instantiation_of = is_instantiation<Template, Class>::value;
+
+template <typename T>
+    requires is_instantiation_of<T, std::map>
+T LuaGet(lua_State *L, int arg) {
+    arg = lua_absindex(L, arg);
+    luaL_checktype(L, arg, LUA_TTABLE);
+    T v;
+    lua_pushnil(L);
+    while (lua_next(L, arg)) {
+        auto key = LuaGet<typename T::key_type>(L, -2);
+        auto mapped = LuaGet<typename T::mapped_type>(L, -1);
+        v.emplace(std::move(key), std::move(mapped));
+        lua_pop(L, 1);
+    }
+    return v;
+}
+
+template <typename T>
+    requires is_instantiation_of<T, std::vector>
+T LuaGet(lua_State *L, int arg) {
+    arg = lua_absindex(L, arg);
+    luaL_checktype(L, arg, LUA_TTABLE);
+    lua_Integer n = luaL_len(L, arg);
+    T v;
+    v.reserve((size_t)n);
+    for (lua_Integer i = 1; i <= n; ++i) {
+        lua_geti(L, arg, i);
+        auto value = LuaGet<typename T::value_type>(L, -1);
+        v.emplace_back(std::move(value));
+        lua_pop(L, 1);
+    }
+    return v;
+}
+
+template <typename T, std::size_t I>
+void LuaRawStructGet(lua_State *L, int arg, T &v) {
+    if constexpr (I < reflection::field_count<T>) {
+        constexpr auto name = reflection::field_name<T, I>;
+        lua_getfield(L, arg, name.data());
+        reflection::field_access<I>(v) = LuaGet<reflection::field_type<T, I>>(L, -1);
+        lua_pop(L, 1);
+        LuaRawStructGet<T, I + 1>(L, arg, v);
+    }
+}
+
+template <typename T, std::size_t I>
+void LuaRawStructPush(lua_State *L, const T &v);
+
+template <typename T>
+    requires std::is_aggregate_v<T>
+void LuaPush(lua_State *L, const T &v) {
+    lua_createtable(L, 0, (int)reflection::field_count<T>);
+    LuaRawStructPush<T, 0>(L, v);
+}
+
+template <typename T, std::size_t I>
+void LuaRawStructPush(lua_State *L, const T &v) {
+    if constexpr (I < reflection::field_count<T>) {
+        constexpr auto name = reflection::field_name<T, I>;
+        LuaPush<reflection::field_type<T, I>>(L, reflection::field_access<I>(v));
+        lua_setfield(L, -2, name.data());
+        LuaRawStructPush<T, I + 1>(L, v);
+    }
+}
+
+inline int LuaTypePush(lua_State *L, LuaTypeid type_id, const void *c_in) {
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "stack_push");
+    lua_pushinteger(L, type_id);
+    lua_gettable(L, -2);
+
+    if (!lua_isnil(L, -1)) {
+        neko_luabind_Pushfunc func = (neko_luabind_Pushfunc)lua_touserdata(L, -1);
+        lua_pop(L, 2);
+        return func(L, type_id, c_in);
+    }
+
+    lua_pop(L, 2);
+
+    // if (neko_luabind_struct_registered_type(L, type_id)) {
+    //     return neko_luabind_struct_push_type(L, type_id, c_in);
+    // }
+
+    if (LuaTypeIsEnum(L, type_id)) {
+        lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_values");
+        lua_pushinteger(L, type_id);
+        lua_gettable(L, -2);
+
+        if (!lua_isnil(L, -1)) {
+
+            lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_sizes");
+            lua_pushinteger(L, type_id);
+            lua_gettable(L, -2);
+            size_t size = lua_tointeger(L, -1);
+            lua_pop(L, 2);
+
+            lua_Integer lvalue = 0;
+            memcpy(&lvalue, c_in, size);
+
+            lua_pushinteger(L, lvalue);
+            lua_gettable(L, -2);
+
+            if (!lua_isnil(L, -1)) {
+                lua_getfield(L, -1, "name");
+                lua_remove(L, -2);
+                lua_remove(L, -2);
+                lua_remove(L, -2);
+                return 1;
+            }
+
+            lua_pop(L, 3);
+            lua_pushfstring(L, "neko_lua_enum_push: Enum '%s' value %d not registered!", GetLuaTypeinfo(L, type_id).name, lvalue);
+            lua_error(L);
+            return 0;
+        }
+
+        lua_pop(L, 2);
+        lua_pushfstring(L, "neko_lua_enum_push: Enum '%s' not registered!", GetLuaTypeinfo(L, type_id).name);
+        lua_error(L);
+        return 0;
+    }
+
+    lua_pushfstring(L, "neko_luabind_push: conversion to Lua object from type '%s' not registered!", GetLuaTypeinfo(L, type_id).name);
+    lua_error(L);
+    return 0;
+}
+
+inline void LuaTypeTo(lua_State *L, LuaTypeid type_id, void *c_out, int index) {
+
+    lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "stack_to");
+    lua_pushinteger(L, type_id);
+    lua_gettable(L, -2);
+
+    if (!lua_isnil(L, -1)) {
+        neko_luabind_Tofunc func = (neko_luabind_Tofunc)lua_touserdata(L, -1);
+        lua_pop(L, 2);
+        func(L, type_id, c_out, index);
+        return;
+    }
+
+    lua_pop(L, 2);
+
+    // if (neko_luabind_struct_registered_type(L, type_id)) {
+    //     neko_luabind_struct_to_type(L, type_id, c_out, index);
+    //     return;
+    // }
+
+    if (LuaTypeIsEnum(L, type_id)) {
+
+        const char *name = lua_tostring(L, index);
+
+        lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums");
+        lua_pushinteger(L, type_id);
+        lua_gettable(L, -2);
+
+        if (!lua_isnil(L, -1)) {
+
+            lua_getfield(L, LUA_REGISTRYINDEX, NEKO_LUA_AUTO_REGISTER_PREFIX "enums_sizes");
+            lua_pushinteger(L, type_id);
+            lua_gettable(L, -2);
+            size_t size = lua_tointeger(L, -1);
+            lua_pop(L, 2);
+
+            lua_pushstring(L, name);
+            lua_gettable(L, -2);
+
+            if (!lua_isnil(L, -1)) {
+                lua_getfield(L, -1, "value");
+                lua_Integer value = lua_tointeger(L, -1);
+                lua_pop(L, 4);
+                memcpy(c_out, &value, size);
+                return;
+            }
+
+            lua_pop(L, 3);
+            lua_pushfstring(L, "neko_lua_enum_to: Enum '%s' field '%s' not registered!", GetLuaTypeinfo(L, type_id).name, name);
+            lua_error(L);
+            return;
+        }
+
+        lua_pop(L, 3);
+        lua_pushfstring(L, "neko_lua_enum_to: Enum '%s' not registered!", GetLuaTypeinfo(L, type_id).name);
+        lua_error(L);
+        return;
+    }
+
+    lua_pushfstring(L, "neko_luabind_to: conversion from Lua object to type '%s' not registered!", GetLuaTypeinfo(L, type_id).name);
+    lua_error(L);
 }
 
 };  // namespace luabind
