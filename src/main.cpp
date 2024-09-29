@@ -280,7 +280,15 @@ int main() {
         lua_register(L, f.name, f.func);
     }
 
-    lua_run_string(L, table_show_src);
+    vm.RunString(table_show_src);
+
+    vm.RunString(R"lua(
+    function hello()
+        print("hello?")
+    end
+    )lua");
+
+    vm("hello");
 
     TestStruct TestVec4 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
 
@@ -298,7 +306,7 @@ int main() {
     std::cout << LuaEnumHas<TestEnum>(L, 3) << '\n';
     std::cout << LuaEnumHas<TestEnum>(L, 2) << '\n';
 
-    lua_run_string(L, R"(
+    vm.RunString(R"(
         print("Hello NekoLua!")
         print(TestAssetKind_1("TestEnum_A"))
         print(TestAssetKind_2(2))

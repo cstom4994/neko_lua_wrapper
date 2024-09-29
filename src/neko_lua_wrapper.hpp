@@ -3,16 +3,12 @@
 #if !defined(NEKO_LUAX_HPP)
 #define NEKO_LUAX_HPP
 
-#include <atomic>
+#include <bit>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
-#include <format>
-#include <initializer_list>
 #include <iostream>
-#include <list>
 #include <map>
-#include <set>
 #include <string>
 #include <tuple>  // std::ignore
 #include <typeindex>
@@ -20,10 +16,15 @@
 #include <variant>
 #include <vector>
 
-#include "neko_lua_wrapper.h"
+#include "luax.h"
 #include "pp.inl"
 
-#define INHERIT_TABLE "inherit_table"
+namespace std {
+template <typename E, typename = std::enable_if_t<std::is_enum_v<E>>>
+constexpr std::underlying_type_t<E> to_underlying(E e) noexcept {
+    return static_cast<std::underlying_type_t<E>>(e);
+}
+}  // namespace std
 
 namespace neko {
 
@@ -289,37 +290,108 @@ void luax_run_nekogame(lua_State *L);
 
 i32 luax_require_script(lua_State *L, String filepath);
 
-void luax_stack_dump(lua_State *L);
+inline lua_Integer luax_len(lua_State *L, i32 arg) {
+    lua_len(L, arg);
+    lua_Integer len = luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    return len;
+}
 
-void luax_get(lua_State *L, const_str tb, const_str field);
-void luax_pcall(lua_State *L, i32 args, i32 results);
-
-void luax_neko_get(lua_State *L, const char *field);
-
-int luax_msgh(lua_State *L);
-
-lua_Integer luax_len(lua_State *L, i32 arg);
-void luax_geti(lua_State *L, i32 arg, lua_Integer n);
+inline void luax_geti(lua_State *L, i32 arg, lua_Integer n) {
+    lua_pushinteger(L, n);
+    lua_gettable(L, arg);
+}
 
 // 将表值设置在堆栈顶部
-void luax_set_number_field(lua_State *L, const char *key, lua_Number n);
-void luax_set_int_field(lua_State *L, const char *key, lua_Integer n);
-void luax_set_string_field(lua_State *L, const char *key, const char *str);
+inline void luax_set_number_field(lua_State *L, const char *key, lua_Number n) {
+    lua_pushnumber(L, n);
+    lua_setfield(L, -2, key);
+}
+
+inline void luax_set_int_field(lua_State *L, const char *key, lua_Integer n) {
+    lua_pushinteger(L, n);
+    lua_setfield(L, -2, key);
+}
+
+inline void luax_set_string_field(lua_State *L, const char *key, const char *str) {
+    lua_pushstring(L, str);
+    lua_setfield(L, -2, key);
+}
 
 // 从表中获取值
-lua_Number luax_number_field(lua_State *L, i32 arg, const char *key);
-lua_Number luax_opt_number_field(lua_State *L, i32 arg, const char *key, lua_Number fallback);
+inline lua_Number luax_number_field(lua_State *L, i32 arg, const char *key) {
+    lua_getfield(L, arg, key);
+    lua_Number num = luaL_checknumber(L, -1);
+    lua_pop(L, 1);
+    return num;
+}
 
-lua_Integer luax_int_field(lua_State *L, i32 arg, const char *key);
-lua_Integer luax_opt_int_field(lua_State *L, i32 arg, const char *key, lua_Integer fallback);
+inline lua_Number luax_opt_number_field(lua_State *L, i32 arg, const char *key, lua_Number fallback) {
+    i32 type = lua_getfield(L, arg, key);
 
-String luax_string_field(lua_State *L, i32 arg, const char *key);
-String luax_opt_string_field(lua_State *L, i32 arg, const char *key, const char *fallback);
+    lua_Number num = fallback;
+    if (type != LUA_TNIL) {
+        num = luaL_optnumber(L, -1, fallback);
+    }
 
-bool luax_boolean_field(lua_State *L, i32 arg, const char *key, bool fallback = false);
+    lua_pop(L, 1);
+    return num;
+}
 
-String luax_check_string(lua_State *L, i32 arg);
-String luax_opt_string(lua_State *L, i32 arg, String def);
+inline lua_Integer luax_int_field(lua_State *L, i32 arg, const char *key) {
+    lua_getfield(L, arg, key);
+    lua_Integer num = luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    return num;
+}
+
+inline lua_Number luax_opt_int_field(lua_State *L, i32 arg, const char *key, lua_Number fallback) {
+    i32 type = lua_getfield(L, arg, key);
+
+    lua_Number num = fallback;
+    if (type != LUA_TNIL) {
+        num = luaL_optinteger(L, -1, fallback);
+    }
+
+    lua_pop(L, 1);
+    return num;
+}
+
+inline String luax_string_field(lua_State *L, i32 arg, const char *key) {
+    lua_getfield(L, arg, key);
+    size_t len = 0;
+    char *str = (char *)luaL_checklstring(L, -1, &len);
+    lua_pop(L, 1);
+    return {str, len};
+}
+
+inline String luax_opt_string_field(lua_State *L, i32 arg, const char *key, const char *fallback) {
+    lua_getfield(L, arg, key);
+    size_t len = 0;
+    char *str = (char *)luaL_optlstring(L, -1, fallback, &len);
+    lua_pop(L, 1);
+    return {str, len};
+}
+
+inline bool luax_boolean_field(lua_State *L, i32 arg, const char *key, bool fallback = false) {
+    i32 type = lua_getfield(L, arg, key);
+
+    bool b = fallback;
+    if (type != LUA_TNIL) {
+        b = lua_toboolean(L, -1);
+    }
+
+    lua_pop(L, 1);
+    return b;
+}
+
+inline String luax_check_string(lua_State *L, i32 arg) {
+    size_t len = 0;
+    char *str = (char *)luaL_checklstring(L, arg, &len);
+    return {str, len};
+}
+
+inline String luax_opt_string(lua_State *L, i32 arg, String def) { return lua_isstring(L, arg) ? luax_check_string(L, arg) : def; }
 
 inline void luax_new_class(lua_State *L, const char *mt_name, const luaL_Reg *l) {
     luaL_newmetatable(L, mt_name);
@@ -375,10 +447,6 @@ void luax_new_userdata(lua_State *L, T data, const char *tname) {
 
 #define luax_ptr_userdata luax_new_userdata
 
-int __neko_bind_callback_save(lua_State *L);
-int __neko_bind_callback_call(lua_State *L);
-int l_nameof(lua_State *L);
-
 namespace detail {
 
 template <typename T, typename I>
@@ -394,6 +462,196 @@ constexpr bool check_integral_limit(I i) {
         return static_cast<std::make_unsigned_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_unsigned_t<I>>(i) <= (std::numeric_limits<T>::max)();
     } else {
         return static_cast<std::make_signed_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_signed_t<I>>(i) <= (std::numeric_limits<T>::max)();
+    }
+}
+
+union lua_maxalign_t {
+    LUAI_MAXALIGN;
+};
+constexpr inline size_t lua_maxalign = std::alignment_of_v<lua_maxalign_t>;
+
+template <typename T>
+constexpr T *udata_align(void *storage) {
+    if constexpr (std::alignment_of_v<T> > lua_maxalign) {
+        uintptr_t mask = (uintptr_t)(std::alignment_of_v<T> - 1);
+        storage = (void *)(((uintptr_t)storage + mask) & ~mask);
+        return static_cast<T *>(storage);
+    } else {
+        return static_cast<T *>(storage);
+    }
+}
+
+template <typename T>
+constexpr T *udata_new(lua_State *L, int nupvalue) {
+    if constexpr (std::alignment_of_v<T> > lua_maxalign) {
+        void *storage = lua_newuserdatauv(L, sizeof(T) + std::alignment_of_v<T>, nupvalue);
+        std::memset(storage, 0, sizeof(T));
+        return udata_align<T>(storage);
+    } else {
+        void *storage = lua_newuserdatauv(L, sizeof(T), nupvalue);
+        std::memset(storage, 0, sizeof(T));
+        std::memset(storage, 0, sizeof(T));
+        return udata_align<T>(storage);
+    }
+}
+
+template <typename T>
+T checklightud(lua_State *L, int arg) {
+    luaL_checktype(L, arg, LUA_TLIGHTUSERDATA);
+    return tolightud<T>(L, arg);
+}
+
+template <typename T>
+T &toudata(lua_State *L, int arg) {
+    return *udata_align<T>(lua_touserdata(L, arg));
+}
+
+template <typename T>
+T *toudata_ptr(lua_State *L, int arg) {
+    return udata_align<T>(lua_touserdata(L, arg));
+}
+
+template <typename T>
+struct udata {};
+template <typename T, typename = void>
+struct udata_has_nupvalue : std::false_type {};
+template <typename T>
+struct udata_has_nupvalue<T, std::void_t<decltype(udata<T>::nupvalue)>> : std::true_type {};
+
+template <typename T>
+int destroyudata(lua_State *L) {
+    toudata<T>(L, 1).~T();
+    return 0;
+}
+
+template <typename T>
+void getmetatable(lua_State *L) {
+    if (luaL_newmetatable(L, reflection::name_v<T>.data())) {
+        if constexpr (!std::is_trivially_destructible<T>::value) {
+            lua_pushcfunction(L, destroyudata<T>);
+            lua_setfield(L, -2, "__gc");
+        }
+        udata<T>::metatable(L);
+    }
+}
+
+template <typename T, typename... Args>
+T &newudata(lua_State *L, Args &&...args) {
+    int nupvalue = 0;
+    if constexpr (udata_has_nupvalue<T>::value) {
+        nupvalue = udata<T>::nupvalue;
+    }
+    T *o = udata_new<T>(L, nupvalue);
+    new (o) T(std::forward<Args>(args)...);
+    getmetatable<T>(L);
+    lua_setmetatable(L, -2);
+    return *o;
+}
+
+template <typename T>
+T &checkudata(lua_State *L, int arg, const_str tname = reflection::name_v<T>.data()) {
+    return *udata_align<T>(luaL_checkudata(L, arg, tname));
+}
+
+inline std::string_view checkstrview(lua_State *L, int idx) {
+    size_t len = 0;
+    const char *buf = luaL_checklstring(L, idx, &len);
+    return {buf, len};
+}
+
+template <typename T, typename I>
+constexpr bool checklimit(I i) {
+    static_assert(std::is_integral_v<I>);
+    static_assert(std::is_integral_v<T>);
+    static_assert(sizeof(I) >= sizeof(T));
+    if constexpr (sizeof(I) == sizeof(T)) {
+        return true;
+    } else if constexpr (std::numeric_limits<I>::is_signed == std::numeric_limits<T>::is_signed) {
+        return i >= std::numeric_limits<T>::lowest() && i <= (std::numeric_limits<T>::max)();
+    } else if constexpr (std::numeric_limits<I>::is_signed) {
+        return static_cast<std::make_unsigned_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_unsigned_t<I>>(i) <= (std::numeric_limits<T>::max)();
+    } else {
+        return static_cast<std::make_signed_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_signed_t<I>>(i) <= (std::numeric_limits<T>::max)();
+    }
+}
+
+template <typename T>
+T checkinteger(lua_State *L, int arg) {
+    static_assert(std::is_trivial_v<T>);
+    if constexpr (std::is_enum_v<T>) {
+        using UT = std::underlying_type_t<T>;
+        return static_cast<T>(checkinteger<UT>(L, arg));
+    } else if constexpr (std::is_integral_v<T>) {
+        lua_Integer r = luaL_checkinteger(L, arg);
+        if constexpr (std::is_same_v<T, lua_Integer>) {
+            return r;
+        } else if constexpr (sizeof(T) >= sizeof(lua_Integer)) {
+            return static_cast<T>(r);
+        } else {
+            if (checklimit<T>(r)) {
+                return static_cast<T>(r);
+            }
+            luaL_error(L, "bad argument '#%d' limit exceeded", arg);
+            // std::unreachable();
+            neko_assert(0, "unreachable");
+        }
+    } else {
+        return std::bit_cast<T>(checkinteger<lua_Integer>(L, arg));
+    }
+}
+template <typename T, T def>
+T optinteger(lua_State *L, int arg) {
+    static_assert(std::is_trivial_v<T>);
+    if constexpr (std::is_enum_v<T>) {
+        using UT = std::underlying_type_t<T>;
+        return static_cast<T>(optinteger<UT, std::to_underlying(def)>(L, arg));
+    } else if constexpr (std::is_integral_v<T>) {
+        if constexpr (std::is_same_v<T, lua_Integer>) {
+            return luaL_optinteger(L, arg, def);
+        } else if constexpr (sizeof(T) == sizeof(lua_Integer)) {
+            lua_Integer r = optinteger<lua_Integer, static_cast<lua_Integer>(def)>(L, arg);
+            return static_cast<T>(r);
+        } else if constexpr (sizeof(T) < sizeof(lua_Integer)) {
+            lua_Integer r = optinteger<lua_Integer, static_cast<lua_Integer>(def)>(L, arg);
+            if (checklimit<T>(r)) {
+                return static_cast<T>(r);
+            }
+            luaL_error(L, "bad argument '#%d' limit exceeded", arg);
+            // std::unreachable();
+            neko_assert(0, "unreachable");
+        } else {
+            static_assert(checklimit<lua_Integer>(def));
+            lua_Integer r = optinteger<lua_Integer, static_cast<lua_Integer>(def)>(L, arg);
+            return static_cast<T>(r);
+        }
+    } else {
+        // If std::bit_cast were not constexpr, it would fail here, so let it fail.
+        return std::bit_cast<T>(optinteger<lua_Integer, std::bit_cast<lua_Integer>(def)>(L, arg));
+    }
+}
+
+template <typename T>
+T tolightud(lua_State *L, int arg) {
+    if constexpr (std::is_integral_v<T>) {
+        uintptr_t r = std::bit_cast<uintptr_t>(tolightud<void *>(L, arg));
+        if constexpr (std::is_same_v<T, uintptr_t>) {
+            return r;
+        } else if constexpr (sizeof(T) >= sizeof(uintptr_t)) {
+            return static_cast<T>(r);
+        } else {
+            if (checklimit<T>(r)) {
+                return static_cast<T>(r);
+            }
+            luaL_error(L, "bad argument #%d limit exceeded", arg);
+            // std::unreachable();
+            neko_assert(0, "unreachable");
+        }
+    } else if constexpr (std::is_same_v<T, void *>) {
+        return lua_touserdata(L, arg);
+    } else if constexpr (std::is_pointer_v<T>) {
+        return static_cast<T>(tolightud<void *>(L, arg));
+    } else {
+        return std::bit_cast<T>(tolightud<void *>(L, arg));
     }
 }
 
@@ -581,30 +839,6 @@ struct LuaStack<std::string const &> {
 };
 
 }  // namespace detail
-
-template <typename T>
-T raw_to(lua_State *L, int index) {
-    if constexpr (std::is_integral_v<T>) {
-        luaL_argcheck(L, lua_isnumber(L, index), index, "number expected");
-        return static_cast<T>(lua_tointeger(L, index));
-    } else if constexpr (std::same_as<T, f32> || std::same_as<T, f64>) {
-        luaL_argcheck(L, lua_isnumber(L, index), index, "number expected");
-        return static_cast<T>(lua_tonumber(L, index));
-    } else if constexpr (std::same_as<T, String>) {
-        // luaL_argcheck(L, lua_isstring(L, index), index, "Neko::String expected");
-        return luax_check_string(L, index);
-    } else if constexpr (std::same_as<T, const_str>) {
-        luaL_argcheck(L, lua_isstring(L, index), index, "string expected");
-        return lua_tostring(L, index);
-    } else if constexpr (std::same_as<T, bool>) {
-        luaL_argcheck(L, lua_isboolean(L, index), index, "boolean expected");
-        return lua_toboolean(L, index) != 0;
-    } else if constexpr (std::is_pointer_v<T>) {
-        return reinterpret_cast<T>(lua_topointer(L, index));
-    } else {
-        static_assert(std::is_same_v<T, void>, "Unsupported type for neko_lua_to");
-    }
-}
 
 // 自动弹出栈元素 确保数量不变的辅助类
 class LuaStackGuard {
@@ -888,26 +1122,177 @@ int Wrap(lua_State *L) {
     return result;
 }
 
+[[nodiscard]] static inline std::string_view PushFQN(lua_State *const L, int const t, int const last) {
+    luaL_Buffer _b;
+    luaL_buffinit(L, &_b);
+    int i{1};
+    for (; i < last; ++i) {
+        lua_rawgeti(L, t, i);
+        luaL_addvalue(&_b);
+        luaL_addlstring(&_b, "/", 1);
+    }
+    if (i == last) {  // 添加最后一个值(如果间隔不为空)
+        lua_rawgeti(L, t, i);
+        luaL_addvalue(&_b);
+    }
+    luaL_pushresult(&_b);  // &b 此时会弹出 (替换为result)
+    return lua_tostring(L, -1);
+}
+
+// 返回一些有助于识别对象的名称
+[[nodiscard]] static inline int DiscoverObjectNameRecur(lua_State *L, int shortest_, int depth_) {
+    static constexpr int kWhat{1};
+    static constexpr int kResult{2};
+    static constexpr int kCache{3};
+    static constexpr int kFQN{4};
+
+    if (shortest_ <= depth_ + 1) {
+        return shortest_;
+    }
+    assert(lua_checkstack(L, 3));
+
+    lua_pushvalue(L, -1);
+    lua_rawget(L, kCache);
+
+    if (!lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return shortest_;
+    }
+
+    lua_pop(L, 1);
+    lua_pushvalue(L, -1);
+    lua_pushinteger(L, 1);
+    lua_rawset(L, kCache);
+
+    lua_pushnil(L);
+    while (lua_next(L, -2)) {
+
+        ++depth_;
+        lua_pushvalue(L, -2);
+        lua_rawseti(L, kFQN, depth_);
+        if (lua_rawequal(L, -1, kWhat)) {
+
+            if (depth_ < shortest_) {
+                shortest_ = depth_;
+                std::ignore = PushFQN(L, kFQN, depth_);
+                lua_replace(L, kResult);
+            }
+
+            lua_pop(L, 2);
+            break;
+        }
+        switch (lua_type(L, -1)) {
+            default:
+                break;
+
+            case LUA_TTABLE:
+                shortest_ = DiscoverObjectNameRecur(L, shortest_, depth_);
+
+                if (lua_getmetatable(L, -1)) {
+                    if (lua_istable(L, -1)) {
+                        ++depth_;
+                        lua_pushstring(L, "__metatable");
+                        lua_rawseti(L, kFQN, depth_);
+                        shortest_ = DiscoverObjectNameRecur(L, shortest_, depth_);
+                        lua_pushnil(L);
+                        lua_rawseti(L, kFQN, depth_);
+                        --depth_;
+                    }
+                    lua_pop(L, 1);
+                }
+                break;
+
+            case LUA_TTHREAD:
+
+                break;
+
+            case LUA_TUSERDATA:
+
+                if (lua_getmetatable(L, -1)) {
+                    if (lua_istable(L, -1)) {
+                        ++depth_;
+                        lua_pushstring(L, "__metatable");
+                        lua_rawseti(L, kFQN, depth_);
+                        shortest_ = DiscoverObjectNameRecur(L, shortest_, depth_);
+                        lua_pushnil(L);
+                        lua_rawseti(L, kFQN, depth_);
+                        --depth_;
+                    }
+                    lua_pop(L, 1);
+                }
+
+                {
+                    int _uvi{1};
+                    while (lua_getiuservalue(L, -1, _uvi) != LUA_TNONE) {
+                        if (lua_istable(L, -1)) {
+                            ++depth_;
+                            lua_pushstring(L, "uservalue");
+                            lua_rawseti(L, kFQN, depth_);
+                            shortest_ = DiscoverObjectNameRecur(L, shortest_, depth_);
+                            lua_pushnil(L);
+                            lua_rawseti(L, kFQN, depth_);
+                            --depth_;
+                        }
+                        lua_pop(L, 1);
+                        ++_uvi;
+                    }
+
+                    lua_pop(L, 1);
+                }
+                break;
+        }
+
+        lua_pop(L, 1);
+
+        lua_pushnil(L);
+        lua_rawseti(L, kFQN, depth_);
+        --depth_;
+    }
+
+    lua_pushvalue(L, -1);
+    lua_pushnil(L);
+    lua_rawset(L, kCache);
+    return shortest_;
+}
+
+static inline int l_nameof(lua_State *L) {
+    int const _what{lua_gettop(L)};
+    if (_what > 1) {
+        luaL_argerror(L, _what, "too many arguments.");
+    }
+
+    if (lua_type(L, 1) < LUA_TTABLE) {
+        lua_pushstring(L, luaL_typename(L, 1));
+        lua_insert(L, -2);
+        return 2;
+    }
+
+    lua_pushnil(L);
+
+    lua_newtable(L);  // 所有已访问表的缓存
+
+    lua_newtable(L);  // 其内容是字符串 连接时会产生唯一的名称
+    lua_pushstring(L, LUA_GNAME);
+    lua_rawseti(L, -2, 1);
+
+    lua_pushglobaltable(L);  // 开始搜索
+    std::ignore = DiscoverObjectNameRecur(L, std::numeric_limits<int>::max(), 1);
+    if (lua_isnil(L, 2)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "_R");
+        lua_rawseti(L, -2, 1);
+        lua_pushvalue(L, LUA_REGISTRYINDEX);
+        std::ignore = DiscoverObjectNameRecur(L, std::numeric_limits<int>::max(), 1);
+    }
+    lua_pop(L, 3);
+    lua_pushstring(L, luaL_typename(L, 1));
+    lua_replace(L, -3);
+    return 2;
+}
+
 struct LuaVM {
 
     struct Tools {
-
-        static std::string_view PushFQN(lua_State *const L, int const t, int const last) {
-            luaL_Buffer _b;
-            luaL_buffinit(L, &_b);
-            int i{1};
-            for (; i < last; ++i) {
-                lua_rawgeti(L, t, i);
-                luaL_addvalue(&_b);
-                luaL_addlstring(&_b, "/", 1);
-            }
-            if (i == last) {  // 添加最后一个值(如果间隔不为空)
-                lua_rawgeti(L, t, i);
-                luaL_addvalue(&_b);
-            }
-            luaL_pushresult(&_b);  // &b 此时会弹出 (替换为result)
-            return lua_tostring(L, -1);
-        }
 
         static void check_arg_count(lua_State *L, int expected) {
             int n = lua_gettop(L);
@@ -1072,44 +1457,31 @@ struct LuaVM {
 
     // template <typename T>
     operator lua_State *() { return L; }
+
+    inline void operator()(const std::string &func) const {
+        lua_getglobal(L, func.c_str());
+
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            std::string err = lua_tostring(L, -1);
+            ::lua_pop(L, 1);
+            printf("%s", err.c_str());
+        }
+    }
+
+    inline void RunString(const std::string &str) {
+        if (luaL_dostring(L, str.c_str())) {
+            std::string err = lua_tostring(L, -1);
+            ::lua_pop(L, 1);
+            printf("%s", err.c_str());
+        }
+    }
 };
 
-inline void lua_run_string(lua_State *m_ls, const_str str_) {
-    if (luaL_dostring(m_ls, str_)) {
-        std::string err = lua_tostring(m_ls, -1);
-        ::lua_pop(m_ls, 1);
-        // printf("%s", err.c_str());
-    }
-}
-
-inline void lua_run_string(lua_State *_L, const std::string &str_) { lua_run_string(_L, str_.c_str()); }
-
-inline int neko_lua_load_file(lua_State *_L, const std::string &file_name_)  //
-{
-    if (luaL_dofile(_L, file_name_.c_str())) {
-        std::string err = lua_tostring(_L, -1);
-        ::lua_pop(_L, 1);
-        // console_log("%s", err.c_str());
-    }
-
-    return 0;
-}
-
-inline void neko_lua_call(lua_State *_L, const char *func_name_) {
-    lua_getglobal(_L, func_name_);
-
-    if (lua_pcall(_L, 0, 0, 0) != 0) {
-        std::string err = lua_tostring(_L, -1);
-        ::lua_pop(_L, 1);
-        // console_log("%s", err.c_str());
-    }
-}
-
-namespace luavalue {
+namespace LuaValue {
 template <class>
 inline constexpr bool always_false_v = false;
 
-using value = std::variant<std::monostate,  // LUA_TNIL
+using Value = std::variant<std::monostate,  // LUA_TNIL
                            bool,            // LUA_TBOOLEAN
                            void *,          // LUA_TLIGHTUSERDATA
                            lua_Integer,     // LUA_TNUMBER
@@ -1117,18 +1489,106 @@ using value = std::variant<std::monostate,  // LUA_TNIL
                            std::string,     // LUA_TSTRING
                            lua_CFunction    // LUA_TFUNCTION
                            >;
-using table = std::map<std::string, value>;
+using Table = std::map<std::string, Value>;
 
-void Set(lua_State *L, int idx, value &v);
-void Set(lua_State *L, int idx, table &v);
-void Get(lua_State *L, const value &v);
-void Get(lua_State *L, const table &v);
-}  // namespace luavalue
+inline void Set(lua_State *L, int idx, Value &v) {
+    switch (lua_type(L, idx)) {
+        case LUA_TNIL:
+            v.emplace<std::monostate>();
+            break;
+        case LUA_TBOOLEAN:
+            v.emplace<bool>(!!lua_toboolean(L, idx));
+            break;
+        case LUA_TLIGHTUSERDATA:
+            v.emplace<void *>(lua_touserdata(L, idx));
+            break;
+        case LUA_TNUMBER:
+            if (lua_isinteger(L, idx)) {
+                v.emplace<lua_Integer>(lua_tointeger(L, idx));
+            } else {
+                v.emplace<lua_Number>(lua_tonumber(L, idx));
+            }
+            break;
+        case LUA_TSTRING: {
+            size_t sz = 0;
+            const char *str = lua_tolstring(L, idx, &sz);
+            v.emplace<std::string>(str, sz);
+            break;
+        }
+        case LUA_TFUNCTION: {
+            lua_CFunction func = lua_tocfunction(L, idx);
+            if (func == NULL || lua_getupvalue(L, idx, 1) != NULL) {
+                luaL_error(L, "Only light C function can be serialized");
+                return;
+            }
+            v.emplace<lua_CFunction>(func);
+            break;
+        }
+        default:
+            luaL_error(L, "Unsupport type %s to serialize", lua_typename(L, idx));
+    }
+}
+
+inline void Set(lua_State *L, int idx, Table &t) {
+    luaL_checktype(L, idx, LUA_TTABLE);
+    lua_pushnil(L);
+    while (lua_next(L, idx)) {
+        size_t sz = 0;
+        const char *str = luaL_checklstring(L, -2, &sz);
+        std::pair<std::string, Value> pair;
+        pair.first.assign(str, sz);
+        Set(L, -1, pair.second);
+        t.emplace(pair);
+        lua_pop(L, 1);
+    }
+}
+
+inline void Get(lua_State *L, const Value &v) {
+    std::visit(
+            [=](auto &&arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, std::monostate>) {
+                    lua_pushnil(L);
+                } else if constexpr (std::is_same_v<T, bool>) {
+                    lua_pushboolean(L, arg);
+                } else if constexpr (std::is_same_v<T, void *>) {
+                    lua_pushlightuserdata(L, arg);
+                } else if constexpr (std::is_same_v<T, lua_Integer>) {
+                    lua_pushinteger(L, arg);
+                } else if constexpr (std::is_same_v<T, lua_Number>) {
+                    lua_pushnumber(L, arg);
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    lua_pushlstring(L, arg.data(), arg.size());
+                } else if constexpr (std::is_same_v<T, lua_CFunction>) {
+                    lua_pushcfunction(L, arg);
+                } else {
+                    static_assert(always_false_v<T>, "non-exhaustive visitor!");
+                }
+            },
+            v);
+}
+
+inline void Get(lua_State *L, const Table &t) {
+    lua_createtable(L, 0, static_cast<int>(t.size()));
+    for (const auto &[k, v] : t) {
+        lua_pushlstring(L, k.data(), k.size());
+        Get(L, v);
+        lua_rawset(L, -3);
+    }
+}
+
+}  // namespace LuaValue
 
 int vfs_lua_loader(lua_State *L);
 
 #define LUASTRUCT_REQUIRED 1
 #define LUASTRUCT_OPTIONAL 0
+
+struct LUASTRUCT_CDATA {
+    int ref;
+    size_t cdata_size;
+    const_str type_name;
+};
 
 #define IS_STRUCT(L, index, type) LuaStructIs(L, #type, index)
 #define CHECK_STRUCT(L, index, type) (LuaStructTodata<type>(L, index, LUASTRUCT_REQUIRED))
@@ -1140,17 +1600,73 @@ int vfs_lua_loader(lua_State *L);
         *CHECK_STRUCT(L, -1, type) = (value); \
     } while (0)
 
-int LuaStructNew(lua_State *L, const char *metatable, size_t size);
-int LuaStructNewRef(lua_State *L, const char *metatable, int parentIndex, const void *data);
-int LuaStructIs(lua_State *L, const char *metatable, int index);
-int LuaStructGC(lua_State *L, const char *metatable);
-const char *LuaStructFieldname(lua_State *L, int index, size_t *length);
+static inline void LuaStruct_setmetatable(lua_State *L, const char *metatable, int index) {
+    luaL_getmetatable(L, metatable);
 
-struct LUASTRUCT_CDATA {
-    int ref;
-    size_t cdata_size;
-    const_str type_name;
-};
+    if (lua_isnoneornil(L, -1)) {
+        luaL_error(L, "The metatable for %s has not been defined", metatable);
+    }
+
+    lua_setmetatable(L, index - 1);
+}
+
+inline int LuaStructNew(lua_State *L, const char *metatable, size_t size) {
+    LUASTRUCT_CDATA *reference = (LUASTRUCT_CDATA *)lua_newuserdata(L, sizeof(LUASTRUCT_CDATA) + size);
+    std::memset(reference, 0, sizeof(LUASTRUCT_CDATA) + size);
+    reference->ref = LUA_NOREF;
+    reference->cdata_size = size;
+    reference->type_name = metatable;
+    void *data = (void *)(reference + 1);
+    memset(data, 0, size);
+    LuaStruct_setmetatable(L, metatable, -1);
+    return 1;
+}
+
+// ParentIndex 是包含对象的堆栈索引 或者 0 表示不包含对象
+inline int LuaStructNewRef(lua_State *L, const char *metatable, int parentIndex, const void *data) {
+    LUASTRUCT_CDATA *reference = (LUASTRUCT_CDATA *)lua_newuserdata(L, sizeof(LUASTRUCT_CDATA) + sizeof(data));
+
+    if (parentIndex != 0) {
+        // 存储对包含对象的引用
+        lua_pushvalue(L, parentIndex);
+        reference->ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        reference->ref = LUA_REFNIL;
+    }
+
+    *((const void **)(reference + 1)) = data;
+
+    LuaStruct_setmetatable(L, metatable, -1);
+
+    return 1;
+}
+
+inline int LuaStructGC(lua_State *L, const char *metatable) {
+    LUASTRUCT_CDATA *reference = (LUASTRUCT_CDATA *)luaL_checkudata(L, 1, metatable);
+    // printf("LuaStructGC %s %d %p\n", metatable, reference->ref, reference);
+    luaL_unref(L, LUA_REGISTRYINDEX, reference->ref);
+    return 0;
+}
+
+inline int LuaStructIs(lua_State *L, const char *metatable, int index) {
+    if (lua_type(L, index) != LUA_TUSERDATA) {
+        return 0;
+    }
+    lua_getmetatable(L, index);
+    luaL_getmetatable(L, metatable);
+
+    int metatablesMatch = lua_rawequal(L, -1, -2);
+
+    lua_pop(L, 2);
+
+    return metatablesMatch;
+}
+
+inline const char *LuaStructFieldname(lua_State *L, int index, size_t *length) {
+    luaL_argcheck(L, lua_type(L, index) == LUA_TSTRING, index, "Field name must be a string");
+
+    return lua_tolstring(L, index, length);
+}
 
 template <typename T>
 auto LuaStructTodata_w(lua_State *L, const char *metatable, int index, int required) -> T * {
@@ -1808,41 +2324,6 @@ inline void LuaTypeTo(lua_State *L, LuaTypeid type_id, void *c_out, int index) {
     lua_error(L);
 }
 
-};  // namespace luabind
-
-}  // namespace neko
-
-enum W_LUA_UPVALUES { NEKO_W_COMPONENTS_NAME = 1, NEKO_W_UPVAL_N };
-
-struct W_LUA_REGISTRY_CONST {
-    static constexpr i32 W_CORE_IDX = 1;                             // neko_instance_t* index
-    static constexpr const_str W_CORE = "__NEKO_W_CORE";             // neko_instance_t* reg
-    static constexpr const_str ENG_UDATA_NAME = "__NEKO_ENGINE_UD";  // neko_instance_t* udata
-    static constexpr const_str CVAR_MAP = "cvar_map";
-
-    static constexpr i32 CVAR_MAP_MAX = 64;
-};
-
-#endif
-
-#ifndef NEKO_LUABIND
-#define NEKO_LUABIND
-
-#include <bit>
-#include <map>
-#include <string>
-#include <vector>
-
-// #include "engine/base.hpp"
-
-namespace std {
-template <typename E, typename = std::enable_if_t<std::is_enum_v<E>>>
-constexpr std::underlying_type_t<E> to_underlying(E e) noexcept {
-    return static_cast<std::underlying_type_t<E>>(e);
-}
-}  // namespace std
-
-namespace neko::lua {
 struct callfunc {
     template <typename F, typename... Args>
     callfunc(F f, Args... args) {
@@ -1866,209 +2347,19 @@ inline int preload_module(lua_State *L) {
     lua_pop(L, 1);
     return 0;
 }
-}  // namespace neko::lua
 
-#define DEFINE_LUAOPEN(name)                                                           \
-    int luaopen_neko_##name(lua_State *L) { return neko::lua::__##name ::luaopen(L); } \
-    static ::neko::lua::callfunc __init_##name(::neko::lua::register_module, "__neko." #name, luaopen_neko_##name);
+};  // namespace luabind
 
-#define DEFINE_LUAOPEN_EXTERN(name) \
-    namespace neko::lua::__##name { \
-        int luaopen(lua_State *L);  \
-    }                               \
+}  // namespace neko
+
+#define DEFINE_LUAOPEN(name)                                                               \
+    int luaopen_neko_##name(lua_State *L) { return neko::luabind::__##name ::luaopen(L); } \
+    static ::neko::luabind::callfunc __init_##name(::neko::luabind::register_module, "__neko." #name, luaopen_neko_##name);
+
+#define DEFINE_LUAOPEN_EXTERN(name)     \
+    namespace neko::luabind::__##name { \
+        int luaopen(lua_State *L);      \
+    }                                   \
     DEFINE_LUAOPEN(name)
-
-namespace neko::lua {
-inline std::string_view checkstrview(lua_State *L, int idx) {
-    size_t len = 0;
-    const char *buf = luaL_checklstring(L, idx, &len);
-    return {buf, len};
-}
-
-template <typename T, typename I>
-constexpr bool checklimit(I i) {
-    static_assert(std::is_integral_v<I>);
-    static_assert(std::is_integral_v<T>);
-    static_assert(sizeof(I) >= sizeof(T));
-    if constexpr (sizeof(I) == sizeof(T)) {
-        return true;
-    } else if constexpr (std::numeric_limits<I>::is_signed == std::numeric_limits<T>::is_signed) {
-        return i >= std::numeric_limits<T>::lowest() && i <= (std::numeric_limits<T>::max)();
-    } else if constexpr (std::numeric_limits<I>::is_signed) {
-        return static_cast<std::make_unsigned_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_unsigned_t<I>>(i) <= (std::numeric_limits<T>::max)();
-    } else {
-        return static_cast<std::make_signed_t<I>>(i) >= std::numeric_limits<T>::lowest() && static_cast<std::make_signed_t<I>>(i) <= (std::numeric_limits<T>::max)();
-    }
-}
-
-template <typename T>
-T checkinteger(lua_State *L, int arg) {
-    static_assert(std::is_trivial_v<T>);
-    if constexpr (std::is_enum_v<T>) {
-        using UT = std::underlying_type_t<T>;
-        return static_cast<T>(checkinteger<UT>(L, arg));
-    } else if constexpr (std::is_integral_v<T>) {
-        lua_Integer r = luaL_checkinteger(L, arg);
-        if constexpr (std::is_same_v<T, lua_Integer>) {
-            return r;
-        } else if constexpr (sizeof(T) >= sizeof(lua_Integer)) {
-            return static_cast<T>(r);
-        } else {
-            if (checklimit<T>(r)) {
-                return static_cast<T>(r);
-            }
-            luaL_error(L, "bad argument '#%d' limit exceeded", arg);
-            // std::unreachable();
-            neko_assert(0, "unreachable");
-        }
-    } else {
-        return std::bit_cast<T>(checkinteger<lua_Integer>(L, arg));
-    }
-}
-template <typename T, T def>
-T optinteger(lua_State *L, int arg) {
-    static_assert(std::is_trivial_v<T>);
-    if constexpr (std::is_enum_v<T>) {
-        using UT = std::underlying_type_t<T>;
-        return static_cast<T>(optinteger<UT, std::to_underlying(def)>(L, arg));
-    } else if constexpr (std::is_integral_v<T>) {
-        if constexpr (std::is_same_v<T, lua_Integer>) {
-            return luaL_optinteger(L, arg, def);
-        } else if constexpr (sizeof(T) == sizeof(lua_Integer)) {
-            lua_Integer r = optinteger<lua_Integer, static_cast<lua_Integer>(def)>(L, arg);
-            return static_cast<T>(r);
-        } else if constexpr (sizeof(T) < sizeof(lua_Integer)) {
-            lua_Integer r = optinteger<lua_Integer, static_cast<lua_Integer>(def)>(L, arg);
-            if (checklimit<T>(r)) {
-                return static_cast<T>(r);
-            }
-            luaL_error(L, "bad argument '#%d' limit exceeded", arg);
-            // std::unreachable();
-            neko_assert(0, "unreachable");
-        } else {
-            static_assert(checklimit<lua_Integer>(def));
-            lua_Integer r = optinteger<lua_Integer, static_cast<lua_Integer>(def)>(L, arg);
-            return static_cast<T>(r);
-        }
-    } else {
-        // If std::bit_cast were not constexpr, it would fail here, so let it fail.
-        return std::bit_cast<T>(optinteger<lua_Integer, std::bit_cast<lua_Integer>(def)>(L, arg));
-    }
-}
-
-template <typename T>
-T tolightud(lua_State *L, int arg) {
-    if constexpr (std::is_integral_v<T>) {
-        uintptr_t r = std::bit_cast<uintptr_t>(tolightud<void *>(L, arg));
-        if constexpr (std::is_same_v<T, uintptr_t>) {
-            return r;
-        } else if constexpr (sizeof(T) >= sizeof(uintptr_t)) {
-            return static_cast<T>(r);
-        } else {
-            if (checklimit<T>(r)) {
-                return static_cast<T>(r);
-            }
-            luaL_error(L, "bad argument #%d limit exceeded", arg);
-            // std::unreachable();
-            neko_assert(0, "unreachable");
-        }
-    } else if constexpr (std::is_same_v<T, void *>) {
-        return lua_touserdata(L, arg);
-    } else if constexpr (std::is_pointer_v<T>) {
-        return static_cast<T>(tolightud<void *>(L, arg));
-    } else {
-        return std::bit_cast<T>(tolightud<void *>(L, arg));
-    }
-}
-
-union lua_maxalign_t {
-    LUAI_MAXALIGN;
-};
-constexpr inline size_t lua_maxalign = std::alignment_of_v<lua_maxalign_t>;
-
-template <typename T>
-constexpr T *udata_align(void *storage) {
-    if constexpr (std::alignment_of_v<T> > lua_maxalign) {
-        uintptr_t mask = (uintptr_t)(std::alignment_of_v<T> - 1);
-        storage = (void *)(((uintptr_t)storage + mask) & ~mask);
-        return static_cast<T *>(storage);
-    } else {
-        return static_cast<T *>(storage);
-    }
-}
-
-template <typename T>
-constexpr T *udata_new(lua_State *L, int nupvalue) {
-    if constexpr (std::alignment_of_v<T> > lua_maxalign) {
-        void *storage = lua_newuserdatauv(L, sizeof(T) + std::alignment_of_v<T>, nupvalue);
-        std::memset(storage, 0, sizeof(T));
-        return udata_align<T>(storage);
-    } else {
-        void *storage = lua_newuserdatauv(L, sizeof(T), nupvalue);
-        std::memset(storage, 0, sizeof(T));
-        std::memset(storage, 0, sizeof(T));
-        return udata_align<T>(storage);
-    }
-}
-
-template <typename T>
-T checklightud(lua_State *L, int arg) {
-    luaL_checktype(L, arg, LUA_TLIGHTUSERDATA);
-    return tolightud<T>(L, arg);
-}
-
-template <typename T>
-T &toudata(lua_State *L, int arg) {
-    return *udata_align<T>(lua_touserdata(L, arg));
-}
-
-template <typename T>
-T *toudata_ptr(lua_State *L, int arg) {
-    return udata_align<T>(lua_touserdata(L, arg));
-}
-
-template <typename T>
-struct udata {};
-template <typename T, typename = void>
-struct udata_has_nupvalue : std::false_type {};
-template <typename T>
-struct udata_has_nupvalue<T, std::void_t<decltype(udata<T>::nupvalue)>> : std::true_type {};
-
-template <typename T>
-int destroyudata(lua_State *L) {
-    toudata<T>(L, 1).~T();
-    return 0;
-}
-
-template <typename T>
-void getmetatable(lua_State *L) {
-    if (luaL_newmetatable(L, reflection::name_v<T>.data())) {
-        if constexpr (!std::is_trivially_destructible<T>::value) {
-            lua_pushcfunction(L, destroyudata<T>);
-            lua_setfield(L, -2, "__gc");
-        }
-        udata<T>::metatable(L);
-    }
-}
-
-template <typename T, typename... Args>
-T &newudata(lua_State *L, Args &&...args) {
-    int nupvalue = 0;
-    if constexpr (udata_has_nupvalue<T>::value) {
-        nupvalue = udata<T>::nupvalue;
-    }
-    T *o = udata_new<T>(L, nupvalue);
-    new (o) T(std::forward<Args>(args)...);
-    getmetatable<T>(L);
-    lua_setmetatable(L, -2);
-    return *o;
-}
-
-template <typename T>
-T &checkudata(lua_State *L, int arg, const_str tname = reflection::name_v<T>.data()) {
-    return *udata_align<T>(luaL_checkudata(L, arg, tname));
-}
-
-}  // namespace neko::lua
 
 #endif

@@ -215,6 +215,12 @@ void neko_lua_load(lua_State *L, const luaL_Reg *l, const char *name);
 void neko_lua_loadover(lua_State *L, const luaL_Reg *l, const char *name);
 int neko_lua_get_table_pairs_count(lua_State *L, int index);
 
+int __neko_bind_callback_save(lua_State *L);
+int __neko_bind_callback_call(lua_State *L);
+
+void luax_get(lua_State *L, const_str tb, const_str field);
+void luax_pcall(lua_State *L, i32 args, i32 results);
+
 template <typename F>
 inline void luax_package_preload(lua_State *L, const_str name, F function) {
     lua_getglobal(L, "package");
