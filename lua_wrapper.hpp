@@ -215,9 +215,29 @@ constexpr auto field_count_impl() {
     }
 }
 
+struct UniversalType {
+    template <typename T>
+    operator T();
+};
+
+template <typename T, typename... Args>
+consteval auto memberCount() {
+    static_assert(std::is_aggregate_v<std::remove_cvref_t<T>>);
+
+    if constexpr (requires { T{{Args{}}..., {UniversalType{}}}; } == false) {
+        return sizeof...(Args);
+    } else {
+        return memberCount<T, Args..., UniversalType>();
+    }
+}
+
+// template <typename T>
+//     requires std::is_aggregate_v<T>
+// static constexpr auto field_count = field_count_impl<T>();
+
 template <typename T>
     requires std::is_aggregate_v<T>
-static constexpr auto field_count = field_count_impl<T>();
+static constexpr auto field_count = memberCount<T>();
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -446,6 +466,8 @@ void luax_new_userdata(lua_State *L, T data, const char *tname) {
 
 #define luax_ptr_userdata luax_new_userdata
 
+struct LuaNil {};
+
 namespace detail {
 
 template <typename T, typename I>
@@ -655,195 +677,115 @@ T tolightud(lua_State *L, int arg) {
 }
 
 template <typename T>
-struct LuaStack;
+auto Push(lua_State *L, T x)
+    requires std::is_same_v<std::decay_t<T>, LuaNil>
+{
+    lua_pushnil(L);
+}
 
-template <>
-struct LuaStack<lua_CFunction> {
-    static inline void Push(lua_State *L, lua_CFunction f) { lua_pushcfunction(L, f); }
-    static inline lua_CFunction Get(lua_State *L, int index) { return lua_tocfunction(L, index); }
-};
+template <typename T>
+auto Push(lua_State *L, T x)
+    requires std::is_same_v<T, lua_CFunction>
+{
+    lua_pushcfunction(L, x);
+}
 
-template <>
-struct LuaStack<int> {
-    static inline void Push(lua_State *L, int value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline int Get(lua_State *L, int index) { return static_cast<int>(luaL_checkinteger(L, index)); }
-};
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_same_v<T, lua_CFunction>
+{
+    x = lua_tocfunction(L, N);
+}
 
-template <>
-struct LuaStack<int const &> {
-    static inline void Push(lua_State *L, int value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline int Get(lua_State *L, int index) { return static_cast<int>(luaL_checknumber(L, index)); }
-};
+template <typename T>
+auto Push(lua_State *L, T x)
+    requires std::is_same_v<T, bool>
+{
+    lua_pushboolean(L, x);
+}
 
-template <>
-struct LuaStack<unsigned int> {
-    static inline void Push(lua_State *L, unsigned int value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline unsigned int Get(lua_State *L, int index) { return static_cast<unsigned int>(luaL_checkinteger(L, index)); }
-};
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_same_v<T, bool>
+{
+    x = lua_toboolean(L, N);
+}
 
-template <>
-struct LuaStack<unsigned int const &> {
-    static inline void Push(lua_State *L, unsigned int value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline unsigned int Get(lua_State *L, int index) { return static_cast<unsigned int>(luaL_checknumber(L, index)); }
-};
+template <typename T>
+auto Push(lua_State *L, T x)
+    requires std::is_integral_v<T> && !std::is_same_v<T, bool>
+{
+    lua_pushinteger(L, x);
+}
 
-template <>
-struct LuaStack<unsigned char> {
-    static inline void Push(lua_State *L, unsigned char value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline unsigned char Get(lua_State *L, int index) { return static_cast<unsigned char>(luaL_checkinteger(L, index)); }
-};
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_integral_v<T> && !std::is_same_v<T, bool>
+{
+    x = static_cast<T>(lua_tointeger(L, N));
+}
 
-template <>
-struct LuaStack<unsigned char const &> {
-    static inline void Push(lua_State *L, unsigned char value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline unsigned char Get(lua_State *L, int index) { return static_cast<unsigned char>(luaL_checknumber(L, index)); }
-};
+template <typename T>
+auto Push(lua_State *L, T x)
+    requires std::is_floating_point_v<T>
+{
+    lua_pushnumber(L, x);
+}
 
-template <>
-struct LuaStack<short> {
-    static inline void Push(lua_State *L, short value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline short Get(lua_State *L, int index) { return static_cast<short>(luaL_checkinteger(L, index)); }
-};
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_floating_point_v<T>
+{
+    x = static_cast<T>(lua_tonumber(L, N));
+}
 
-template <>
-struct LuaStack<short const &> {
-    static inline void Push(lua_State *L, short value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline short Get(lua_State *L, int index) { return static_cast<short>(luaL_checknumber(L, index)); }
-};
+template <typename T>
+auto Push(lua_State *L, T x)
+    requires std::is_same_v<T, const char *>
+{
+    lua_pushstring(L, x);
+}
 
-template <>
-struct LuaStack<unsigned short> {
-    static inline void Push(lua_State *L, unsigned short value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline unsigned short Get(lua_State *L, int index) { return static_cast<unsigned short>(luaL_checkinteger(L, index)); }
-};
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_same_v<T, const char *>
+{
+    x = lua_tostring(L, N);
+}
 
-template <>
-struct LuaStack<unsigned short const &> {
-    static inline void Push(lua_State *L, unsigned short value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline unsigned short Get(lua_State *L, int index) { return static_cast<unsigned short>(luaL_checknumber(L, index)); }
-};
+template <typename T>
+auto Push(lua_State *L, T x)
+    requires std::is_same_v<T, std::string>
+{
+    lua_pushstring(L, x.c_str());
+}
 
-template <>
-struct LuaStack<long> {
-    static inline void Push(lua_State *L, long value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline long Get(lua_State *L, int index) { return static_cast<long>(luaL_checkinteger(L, index)); }
-};
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_same_v<T, std::string>
+{
+    x = lua_tostring(L, N);
+}
 
-template <>
-struct LuaStack<long const &> {
-    static inline void Push(lua_State *L, long value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline long Get(lua_State *L, int index) { return static_cast<long>(luaL_checknumber(L, index)); }
-};
-
-template <>
-struct LuaStack<unsigned long> {
-    static inline void Push(lua_State *L, unsigned long value) { lua_pushinteger(L, static_cast<lua_Integer>(value)); }
-    static inline unsigned long Get(lua_State *L, int index) { return static_cast<unsigned long>(luaL_checkinteger(L, index)); }
-};
-
-template <>
-struct LuaStack<unsigned long const &> {
-    static inline void Push(lua_State *L, unsigned long value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline unsigned long Get(lua_State *L, int index) { return static_cast<unsigned long>(luaL_checknumber(L, index)); }
-};
-
-template <>
-struct LuaStack<float> {
-    static inline void Push(lua_State *L, float value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline float Get(lua_State *L, int index) { return static_cast<float>(luaL_checknumber(L, index)); }
-};
-
-template <>
-struct LuaStack<float const &> {
-    static inline void Push(lua_State *L, float value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline float Get(lua_State *L, int index) { return static_cast<float>(luaL_checknumber(L, index)); }
-};
-
-template <>
-struct LuaStack<double> {
-    static inline void Push(lua_State *L, double value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline double Get(lua_State *L, int index) { return static_cast<double>(luaL_checknumber(L, index)); }
-};
-
-template <>
-struct LuaStack<double const &> {
-    static inline void Push(lua_State *L, double value) { lua_pushnumber(L, static_cast<lua_Number>(value)); }
-    static inline double Get(lua_State *L, int index) { return static_cast<double>(luaL_checknumber(L, index)); }
-};
-
-template <>
-struct LuaStack<bool> {
-    static inline void Push(lua_State *L, bool value) { lua_pushboolean(L, value ? 1 : 0); }
-    static inline bool Get(lua_State *L, int index) { return lua_toboolean(L, index) ? true : false; }
-};
-
-template <>
-struct LuaStack<bool const &> {
-    static inline void Push(lua_State *L, bool value) { lua_pushboolean(L, value ? 1 : 0); }
-    static inline bool Get(lua_State *L, int index) { return lua_toboolean(L, index) ? true : false; }
-};
-
-template <>
-struct LuaStack<char> {
-    static inline void Push(lua_State *L, char value) {
-        char str[2] = {value, 0};
-        lua_pushstring(L, str);
-    }
-
-    static inline char Get(lua_State *L, int index) { return luaL_checkstring(L, index)[0]; }
-};
-
-template <>
-struct LuaStack<char const &> {
-    static inline void Push(lua_State *L, char value) {
-        char str[2] = {value, 0};
-        lua_pushstring(L, str);
-    }
-
-    static inline char Get(lua_State *L, int index) { return luaL_checkstring(L, index)[0]; }
-};
-
-template <>
-struct LuaStack<char const *> {
-    static inline void Push(lua_State *L, char const *str) {
-        if (str != 0)
-            lua_pushstring(L, str);
-        else
-            lua_pushnil(L);
-    }
-
-    static inline char const *Get(lua_State *L, int index) { return lua_isnil(L, index) ? 0 : luaL_checkstring(L, index); }
-};
-
-template <>
-struct LuaStack<std::string> {
-    static inline void Push(lua_State *L, std::string const &str) { lua_pushlstring(L, str.c_str(), str.size()); }
-
-    static inline std::string Get(lua_State *L, int index) {
-        size_t len;
-        const char *str = luaL_checklstring(L, index, &len);
-        return std::string(str, len);
-    }
-};
-
-template <>
-struct LuaStack<std::string const &> {
-    static inline void Push(lua_State *L, std::string const &str) { lua_pushlstring(L, str.c_str(), str.size()); }
-
-    static inline std::string Get(lua_State *L, int index) {
-        size_t len;
-        const char *str = luaL_checklstring(L, index, &len);
-        return std::string(str, len);
+template <typename T>
+struct LuaStack {
+    static inline void Push(lua_State *L, T any) { detail::Push<T>(L, any); }
+    static inline T Get(lua_State *L, int index) {
+        T x{};
+        detail::Get<T>(L, index, x);
+        return x;
     }
 };
 
 }  // namespace detail
 
+namespace detail {
+
 // 自动弹出栈元素 确保数量不变的辅助类
-class LuaStackGuard {
+class StackGuard {
 public:
-    explicit LuaStackGuard(lua_State *L) : m_L(L), m_count(::lua_gettop(L)) {}
-    ~LuaStackGuard() {
+    explicit StackGuard(lua_State *L) : m_L(L), m_count(::lua_gettop(L)) {}
+    ~StackGuard() {
         int n = ::lua_gettop(m_L);
         assert(n >= m_count);
         if (n > m_count) {
@@ -856,13 +798,6 @@ private:
     int m_count;
 };
 
-struct LuaNil {};
-
-namespace detail {
-template <>
-struct LuaStack<LuaNil> {
-    static inline void Push(lua_State *L, LuaNil const &any) { lua_pushnil(L); }
-};
 }  // namespace detail
 
 class LuaRef;
@@ -925,7 +860,7 @@ public:
 
     template <typename T>
     T Cast() {
-        LuaStackGuard p(L);
+        detail::StackGuard p(L);
         Push();
         return detail::LuaStack<T>::Get(L, -1);
     }
@@ -956,7 +891,7 @@ public:
     // 为该表/键分配一个新值
     template <typename T>
     LuaTableElement &operator=(T v) {
-        LuaStackGuard p(L);
+        detail::StackGuard p(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_ref);
         detail::LuaStack<K>::Push(L, m_key);
         detail::LuaStack<T>::Push(L, v);
@@ -1369,6 +1304,9 @@ struct LuaVM {
     }
 
     lua_State *L;
+
+    LuaVM() = default;
+    LuaVM(lua_State *l) : L(l) {}
 
     inline lua_State *Create() {
 
@@ -2165,12 +2103,12 @@ inline auto LuaGet(lua_State *L, int index) -> T {
 template <typename T, std::size_t I>
 void LuaRawStructGet(lua_State *L, int arg, T &v);
 
-template <typename T>
-    requires std::is_pointer_v<T>
-T LuaGet(lua_State *L, int arg) {
-    luaL_checktype(L, arg, LUA_TLIGHTUSERDATA);
-    return static_cast<T>(lua_touserdata(L, arg));
-}
+// template <typename T>
+//     requires std::is_pointer_v<T>
+// T LuaGet(lua_State *L, int arg) {
+//     luaL_checktype(L, arg, LUA_TLIGHTUSERDATA);
+//     return static_cast<T>(lua_touserdata(L, arg));
+// }
 
 template <>
 inline std::string_view LuaGet<std::string_view>(lua_State *L, int arg) {

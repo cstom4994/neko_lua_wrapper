@@ -160,8 +160,9 @@ struct TestStruct {
 
 struct TestStruct2 {
     int x1, x2;
+    bool x3;
 
-    void print() { std::cout << x1 << ' ' << x2 << std::endl; }
+    void print() { std::cout << x1 << ' ' << x2 << ' ' << x3 << std::endl; }
 };
 
 struct TestStruct3 {
@@ -179,7 +180,7 @@ struct TestStruct4 {
     int x17, x18;
 };
 
-struct TestStruct5 {
+struct TestStruct_NoReg {
     int x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16;
     int x17, x18;
 
@@ -187,11 +188,15 @@ struct TestStruct5 {
         auto [NEKO_PP_PARAMS(x, 18)] = *this;
         std::tuple tu = {NEKO_PP_PARAMS(x, 18)};
         [&]<size_t... I>(std::index_sequence<I...>) {
-            std::cout << '[';
+            std::cout << "TestStruct_NoReg[";
             (..., (std::cout << std::get<I>(tu)));
             std::cout << "]\n";
         }(std::make_index_sequence<18>{});
     }
+};
+
+struct TestStruct_RawArr {
+    int arr[9];
 };
 
 enum TestEnum : int {
@@ -201,7 +206,7 @@ enum TestEnum : int {
 };
 
 static int LuaStruct_test_1(lua_State *L) {
-    LuaStackGuard sg(L);
+
     auto v = LuaGet<TestStruct>(L, 1);
     v->x += 10.f;
     v->y += 10.f;
@@ -212,16 +217,17 @@ static int LuaStruct_test_1(lua_State *L) {
 }
 
 static int LuaStruct_test_2(lua_State *L) {
-    LuaStackGuard sg(L);
+
     auto v = LuaGet<TestStruct2>(L, 1);
     v->x1 += 114.f;
     v->x2 += 514.f;
+    v->x3 = true;
     LuaPush<TestStruct2>(L, *v);
     return 1;
 }
 
 static int LuaStruct_test_3(lua_State *L) {
-    LuaStackGuard sg(L);
+
     auto v = LuaGet<TestStruct3>(L, 1);
 
     v->s2.x1 = 666.f;
@@ -232,7 +238,7 @@ static int LuaStruct_test_3(lua_State *L) {
 }
 
 static int LuaStruct_test_4(lua_State *L) {
-    LuaStackGuard sg(L);
+
     auto v = LuaGet<TestStruct4>(L, 1);
 
     v->x1 += 1001;
@@ -244,7 +250,20 @@ static int LuaStruct_test_4(lua_State *L) {
     return 1;
 }
 
+static int LuaStruct_test_5(lua_State *L) {
+
+    TestStruct v{};
+    v.x = 10086;
+
+    LuaPush<TestStruct>(L, v);
+    return 1;
+}
+
 int main() {
+
+    // std::cout << neko::reflection::field_count<TestStruct_RawArr> << std::endl;
+    // std::cout << memberCount<TestStruct3>() << std::endl;
+    // std::cout << neko::reflection::counting_fields::num_aggregate_unique_fields_v<TestStruct3> << std::endl;
 
     LuaVM vm;
 
@@ -264,6 +283,7 @@ int main() {
     LuaStruct<TestStruct2>(L, "TestStruct2");
     LuaStruct<TestStruct3>(L, "TestStruct3");
     LuaStruct<TestStruct4>(L, "TestStruct4");
+    // LuaStruct<TestStruct_RawArr>(L, "TestStruct_RawArr");
     lua_setglobal(L, "LuaStruct");
 
     LuaEnum<TestEnum>(L);
@@ -272,6 +292,7 @@ int main() {
                       {"LuaStruct_test_2", Wrap<LuaStruct_test_2>},
                       {"LuaStruct_test_3", Wrap<LuaStruct_test_3>},
                       {"LuaStruct_test_4", Wrap<LuaStruct_test_4>},
+                      {"LuaStruct_test_5", Wrap<LuaStruct_test_5>},
                       {"TestAssetKind_1",
                        +[](lua_State *L) {
                            auto type_val = LuaGet<TestEnum>(L, 1);
@@ -297,20 +318,19 @@ int main() {
 
     vm.RunString(table_show_src);
 
-    vm.RunString(R"lua(
+    {
+        vm.RunString(R"lua(
     function hello()
         print("hello?")
     end
     )lua");
-
-    vm("hello");
-
-    TestStruct5 TestVec4 = {1, 2, 3, 4, 5, 6, 7, 8, 2, 2, 3, 4, 5, 6, 7, 8};
+        vm("hello");
+    }
 
     {
-        LuaStackGuard sg(L);
-        LuaPush<TestStruct5>(L, TestVec4);
-        auto TestVec4_ = LuaGetRaw<TestStruct5>(L, -1);
+        TestStruct_NoReg s1 = {1, 2, 3, 4, 5, 6, 7, 8, 2, 2, 3, 4, 5, 6, 7, 8};
+        LuaPush<TestStruct_NoReg>(L, s1);
+        auto TestVec4_ = LuaGetRaw<TestStruct_NoReg>(L, -1);
         TestVec4_.print();
     }
 
@@ -333,9 +353,9 @@ int main() {
         table_show(test_struct.x,test_struct.y,test_struct.z,test_struct.w)
 
         test_struct2 = LuaStruct.TestStruct2.new()
-        table_show(test_struct2.x1,test_struct2.x2)
+        table_show(test_struct2.x1,test_struct2.x2,test_struct2.x3)
         test_struct = LuaStruct_test_2(test_struct2)
-        table_show(test_struct2.x1,test_struct2.x2)
+        table_show(test_struct2.x1,test_struct2.x2,test_struct2.x3)
 
         test_struct3 = LuaStruct.TestStruct3.new()
         table_show(test_struct3.s1,test_struct3.s2)
@@ -350,6 +370,9 @@ int main() {
         table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18)
         test_struct4 = LuaStruct_test_4(test_struct4)
         table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18)
+
+        test_struct5 = LuaStruct_test_5()
+        table_show(test_struct5.x,test_struct5.y,test_struct5.z,test_struct5.w)
 
         print(nameof(LuaStruct.TestStruct))
     )");
@@ -370,6 +393,8 @@ int main() {
 
     TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
     LuaPush(L, TestStruct3);
+
+    std::cout << "======= END =======" << std::endl;
 
     vm.Fini(L);
 
