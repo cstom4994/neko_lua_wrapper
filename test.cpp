@@ -151,6 +151,12 @@ int TestBinding_1(lua_State *L) {
     return 0;
 }
 
+enum TestEnum : int {
+    TestEnum_A,
+    TestEnum_B,
+    TestEnum_C,
+};
+
 struct TestStruct {
     float x, y, z, w;
     int x1, x2;
@@ -178,6 +184,8 @@ struct TestStruct3 {
 struct TestStruct4 {
     int x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16;
     int x17, x18;
+
+    TestEnum e1;
 };
 
 struct TestStruct_NoReg {
@@ -197,12 +205,6 @@ struct TestStruct_NoReg {
 
 struct TestStruct_RawArr {
     int arr[9];
-};
-
-enum TestEnum : int {
-    TestEnum_A,
-    TestEnum_B,
-    TestEnum_C,
 };
 
 static int LuaStruct_test_1(lua_State *L) {
@@ -245,6 +247,8 @@ static int LuaStruct_test_4(lua_State *L) {
     v->x2 += 2002;
     v->x17 += 1777;
     v->x18 += 1888;
+
+    v->e1 = TestEnum_C;
 
     LuaPush<TestStruct4>(L, *v);
     return 1;
@@ -289,6 +293,8 @@ int main() {
                 return 0;
             });
 
+    LuaEnum<TestEnum>(L);
+
     lua_newtable(L);
     LuaStruct<TestStruct>(L, "TestStruct");
     LuaStruct<TestStruct2>(L, "TestStruct2");
@@ -296,8 +302,6 @@ int main() {
     LuaStruct<TestStruct4>(L, "TestStruct4");
     LuaStruct<TestStruct_RawArr>(L, "TestStruct_RawArr");
     lua_setglobal(L, "LuaStruct");
-
-    LuaEnum<TestEnum>(L);
 
     luaL_Reg lib[] = {{"LuaStruct_test_1", Wrap<LuaStruct_test_1>},
                       {"LuaStruct_test_2", Wrap<LuaStruct_test_2>},
@@ -332,11 +336,23 @@ int main() {
 
     {
         vm.RunString(R"lua(
-    function hello()
-        print("hello?")
-    end
-    )lua");
+        function hello()
+            print("hello?")
+        end
+        )lua");
         vm("hello");
+    }
+
+    {
+        LuaPush(
+                L, +[](lua_State *L) -> int {
+                    std::cout << "any lambda?" << std::endl;
+                    return 0;
+                });
+        lua_setglobal(L, "TestLambda_1");
+        vm.RunString(R"lua(
+        TestLambda_1()
+        )lua");
     }
 
     {
@@ -380,9 +396,9 @@ int main() {
         table_show(test_struct3_s2.x1,test_struct3_s2.x2)
 
         test_struct4 = LuaStruct.TestStruct4.new()
-        table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18)
+        table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18,test_struct4.e1)
         test_struct4 = LuaStruct_test_4(test_struct4)
-        table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18)
+        table_show(test_struct4.x1,test_struct4.x2,test_struct4.x3,test_struct4.x4,test_struct4.x17,test_struct4.x18,test_struct4.e1)
 
         test_struct5 = LuaStruct_test_5()
         table_show(test_struct5.x,test_struct5.y,test_struct5.z,test_struct5.w)

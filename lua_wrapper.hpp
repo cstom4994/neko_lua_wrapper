@@ -793,6 +793,22 @@ auto Get(lua_State *L, int idx, T &arr)
     lua_pop(L, 1);
 }
 
+template <typename T>
+auto Push(lua_State *L, T &x)
+    requires std::is_enum_v<T>
+{
+    return detail::Push(L, static_cast<typename std::underlying_type<T>::type>(x));
+}
+
+template <typename T>
+auto Get(lua_State *L, int N, T &x)
+    requires std::is_enum_v<T>
+{
+    typename std::underlying_type<T>::type new_x;
+    detail::Get(L, N, new_x);
+    x = static_cast<T>(new_x);
+}
+
 struct LuaStack {
     template <typename T>
     static inline void Push(lua_State *L, T &&any) {
@@ -2107,8 +2123,8 @@ void LuaEnum(lua_State *L) {
 }
 
 template <typename T>
-inline void LuaPush(lua_State *L, const T &v) {
-    detail::LuaStack::Push(L, v);
+inline void LuaPush(lua_State *L, T &&v) {
+    detail::LuaStack::Push(L, std::forward<T>(v));
 }
 
 template <typename T>
@@ -2207,7 +2223,8 @@ template <typename T, std::size_t I>
 void LuaRawStructPush(lua_State *L, const T &v) {
     if constexpr (I < reflection::field_count<T>) {
         constexpr auto name = reflection::field_name<T, I>;
-        LuaPush<reflection::field_type<T, I>>(L, reflection::field_access<I>(v));
+        using FT = reflection::field_type<T, I>;
+        LuaPush(L, reflection::field_access<I>(v));
         lua_setfield(L, -2, name.data());
         LuaRawStructPush<T, I + 1>(L, v);
     }
