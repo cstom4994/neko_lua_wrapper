@@ -767,13 +767,40 @@ auto Get(lua_State *L, int N, T &x)
     x = lua_tostring(L, N);
 }
 
+template <typename T, std::size_t N>
+auto Push(lua_State *L, T (&arr)[N]) {
+    lua_newtable(L);  // 创建 Lua 表
+    int i = 0;
+    for (auto &x : arr) {
+        lua_pushinteger(L, ++i);  // Lua 索引从 1 开始
+        detail::Push(L, x);       // 对单个元素递归调用 Push
+        lua_settable(L, -3);      // 设置键值对
+    }
+}
+
 template <typename T>
+auto Get(lua_State *L, int idx, T &arr)
+    requires std::is_bounded_array_v<T>
+{
+    lua_pushvalue(L, idx);
+    constexpr std::size_t N = std::extent_v<T>;  // 推断数组大小
+    for (std::size_t i = 0; i < N; ++i) {
+        lua_pushinteger(L, i + 1);
+        lua_gettable(L, -2);
+        detail::Get(L, -1, arr[i]);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 struct LuaStack {
-    static inline void Push(lua_State *L, T any) { detail::Push<T>(L, any); }
-    static inline T Get(lua_State *L, int index) {
-        T x{};
-        detail::Get<T>(L, index, x);
-        return x;
+    template <typename T>
+    static inline void Push(lua_State *L, T &&any) {
+        detail::Push(L, std::forward<T>(any));
+    }
+    template <typename T>
+    static inline auto Get(lua_State *L, int index, T &value) {
+        return detail::Get<T>(L, index, value);
     }
 };
 
@@ -853,7 +880,7 @@ public:
     void Append(T v) const {
         Push();
         size_t len = lua_rawlen(L, -1);
-        detail::LuaStack<T>::Push(L, v);
+        detail::LuaStack::Push(L, v);
         lua_rawseti(L, -2, ++len);
         lua_pop(L, 1);
     }
@@ -862,7 +889,9 @@ public:
     T Cast() {
         detail::StackGuard p(L);
         Push();
-        return detail::LuaStack<T>::Get(L, -1);
+        T t{};
+        detail::LuaStack::Get(L, -1, t);
+        return t;
     }
 
     template <typename T>
@@ -883,7 +912,7 @@ public:
 
     void Push() const override {
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_ref);
-        detail::LuaStack<K>::Push(L, (K)m_key);
+        detail::LuaStack::Push(L, m_key);
         lua_gettable(L, -2);
         lua_remove(L, -2);
     }
@@ -893,8 +922,8 @@ public:
     LuaTableElement &operator=(T v) {
         detail::StackGuard p(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_ref);
-        detail::LuaStack<K>::Push(L, m_key);
-        detail::LuaStack<T>::Push(L, v);
+        detail::LuaStack::Push(L, m_key);
+        detail::LuaStack::Push(L, v);
         lua_settable(L, -3);
         return *this;
     }
@@ -907,10 +936,12 @@ public:
 };
 
 namespace detail {
-template <typename K>
-struct LuaStack<LuaTableElement<K>> {
-    static inline void Push(lua_State *L, LuaTableElement<K> const &e) { e.Push(); }
-};
+
+template <typename T>
+auto Push(lua_State *L, LuaTableElement<T> const &e) {
+    e.Push();
+}
+
 }  // namespace detail
 
 class LuaRef : public LuaRefBase {
@@ -993,10 +1024,9 @@ public:
 };
 
 namespace detail {
-template <>
-struct LuaStack<LuaRef> {
-    static inline void Push(lua_State *L, LuaRef const &r) { r.Push(); }
-};
+
+auto Push(lua_State *L, LuaRef const &r) { r.Push(); }
+
 }  // namespace detail
 
 template <>
@@ -1010,7 +1040,7 @@ template <typename... Args>
 inline LuaRef const LuaRefBase::operator()(Args... args) const {
     const int n = sizeof...(Args);
     Push();
-    int dummy[] = {0, ((void)detail::LuaStack<Args>::Push(L, std::forward<Args>(args)), 0)...};
+    int dummy[] = {0, ((void)detail::LuaStack::Push<Args>(L, std::forward<Args>(args)), 0)...};
     std::ignore = dummy;
     luax_pcall(L, n, 1);
     return LuaRef(L, FromStackIndex());
@@ -1027,7 +1057,7 @@ template <typename... Args>
 inline void LuaRefBase::Call(int ret, Args... args) const {
     const int n = sizeof...(Args);
     Push();
-    int dummy[] = {0, ((void)detail::LuaStack<Args>::Push(L, std::forward<Args>(args)), 0)...};
+    int dummy[] = {0, ((void)detail::LuaStack::Push<Args>(L, std::forward<Args>(args)), 0)...};
     std::ignore = dummy;
     luax_pcall(L, n, ret);
     return;  // 如果有返回值保留在 Lua 堆栈中
@@ -1649,10 +1679,10 @@ struct LuaStructAccess {
             }
         } else {
             if (set) {
-                *data = static_cast<T>(detail::LuaStack<T>::Get(L, valueIndex));
+                detail::LuaStack::Get<T>(L, valueIndex, *data);
                 return 0;
             } else {
-                detail::LuaStack<T>::Push(L, *data);
+                detail::LuaStack::Push(L, *data);
                 return 1;
             }
         }
@@ -2078,12 +2108,14 @@ void LuaEnum(lua_State *L) {
 
 template <typename T>
 inline void LuaPush(lua_State *L, const T &v) {
-    detail::LuaStack<T>::Push(L, v);
+    detail::LuaStack::Push(L, v);
 }
 
 template <typename T>
 inline T LuaGet(lua_State *L, int index) {
-    return detail::LuaStack<T>::Get(L, index);
+    T t{};
+    detail::LuaStack::Get(L, index, t);
+    return t;
 }
 
 template <typename T>
@@ -2188,9 +2220,16 @@ inline void LuaPush(lua_State *L, const T &v) {
     if (is_reg_struct) {
         LuaStructPush<T>(L, v);
     } else {  // 未经过注册的聚合类
-        lua_createtable(L, 0, (int)reflection::field_count<T>);
-        LuaRawStructPush<T, 0>(L, v);
+        assert(!"use LuaPushRaw");
     }
+}
+
+template <typename T>
+    requires std::is_aggregate_v<T>
+void LuaPushRaw(lua_State *L, const T &v) {
+    lua_createtable(L, 0, (int)reflection::field_count<T>);
+    LuaRawStructPush<T, 0>(L, v);
+    return;
 }
 
 template <typename T>

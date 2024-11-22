@@ -259,6 +259,17 @@ static int LuaStruct_test_5(lua_State *L) {
     return 1;
 }
 
+static int LuaStruct_test_rawarr(lua_State *L) {
+
+    auto v = LuaGet<TestStruct_RawArr>(L, 1);
+
+    v->arr[0] = 114514;
+    v->arr[5] = 666;
+
+    LuaPush<TestStruct_RawArr>(L, *v);
+    return 1;
+}
+
 int main() {
 
     // std::cout << neko::reflection::field_count<TestStruct_RawArr> << std::endl;
@@ -283,7 +294,7 @@ int main() {
     LuaStruct<TestStruct2>(L, "TestStruct2");
     LuaStruct<TestStruct3>(L, "TestStruct3");
     LuaStruct<TestStruct4>(L, "TestStruct4");
-    // LuaStruct<TestStruct_RawArr>(L, "TestStruct_RawArr");
+    LuaStruct<TestStruct_RawArr>(L, "TestStruct_RawArr");
     lua_setglobal(L, "LuaStruct");
 
     LuaEnum<TestEnum>(L);
@@ -293,6 +304,7 @@ int main() {
                       {"LuaStruct_test_3", Wrap<LuaStruct_test_3>},
                       {"LuaStruct_test_4", Wrap<LuaStruct_test_4>},
                       {"LuaStruct_test_5", Wrap<LuaStruct_test_5>},
+                      {"LuaStruct_test_rawarr", Wrap<LuaStruct_test_rawarr>},
                       {"TestAssetKind_1",
                        +[](lua_State *L) {
                            auto type_val = LuaGet<TestEnum>(L, 1);
@@ -329,9 +341,10 @@ int main() {
 
     {
         TestStruct_NoReg s1 = {1, 2, 3, 4, 5, 6, 7, 8, 2, 2, 3, 4, 5, 6, 7, 8};
-        LuaPush<TestStruct_NoReg>(L, s1);
+        LuaPushRaw<TestStruct_NoReg>(L, s1);
         auto TestVec4_ = LuaGetRaw<TestStruct_NoReg>(L, -1);
         TestVec4_.print();
+        lua_pop(L, 1);
     }
 
     std::cout << neko::reflection::GetTypeName<TestStruct4>() << '\n';
@@ -374,6 +387,11 @@ int main() {
         test_struct5 = LuaStruct_test_5()
         table_show(test_struct5.x,test_struct5.y,test_struct5.z,test_struct5.w)
 
+        test_struct_rawarr = LuaStruct.TestStruct_RawArr.new()
+        table_show(test_struct_rawarr.arr)
+        test_struct_rawarr = LuaStruct_test_rawarr(test_struct_rawarr)
+        table_show(test_struct_rawarr.arr)
+
         print(nameof(LuaStruct.TestStruct))
     )");
 
@@ -391,8 +409,8 @@ int main() {
     PrintTypeinfo(GetLuaTypeinfo(L, f1));
     PrintTypeinfo(GetLuaTypeinfo(L, "TestEnum"));
 
-    TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
-    LuaPush(L, TestStruct3);
+    // TestStruct3 TestStruct3 = {114514.f, 2.f, 3.f, 4.f, 199, 233};
+    // LuaPush(L, TestStruct3);
 
     std::cout << "======= END =======" << std::endl;
 
