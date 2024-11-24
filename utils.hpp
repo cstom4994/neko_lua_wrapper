@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <concepts>
 
 typedef size_t usize;
 
@@ -108,3 +109,8 @@ inline String to_cstr(String str) {
     buf[str.len] = 0;
     return {buf, str.len};
 }
+
+template <typename T>
+concept HasEqualOperator = requires(T a, T b) {
+    { a == b } -> std::convertible_to<bool>;
+};

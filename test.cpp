@@ -207,6 +207,12 @@ struct TestStruct_RawArr {
     int arr[9];
 };
 
+struct TestStruct_WithOp {
+    int x1, x2;
+
+    bool operator==(const TestStruct_WithOp &any) { return x1 == any.x1 && x2 == any.x2; }
+};
+
 static int LuaStruct_test_1(lua_State *L) {
 
     auto v = LuaGet<TestStruct>(L, 1);
@@ -301,6 +307,7 @@ int main() {
     LuaStruct<TestStruct3>(L, "TestStruct3");
     LuaStruct<TestStruct4>(L, "TestStruct4");
     LuaStruct<TestStruct_RawArr>(L, "TestStruct_RawArr");
+    LuaStruct<TestStruct_WithOp>(L, "TestStruct_WithOp");
     lua_setglobal(L, "LuaStruct");
 
     luaL_Reg lib[] = {{"LuaStruct_test_1", Wrap<LuaStruct_test_1>},
@@ -407,6 +414,22 @@ int main() {
         table_show(test_struct_rawarr.arr)
         test_struct_rawarr = LuaStruct_test_rawarr(test_struct_rawarr)
         table_show(test_struct_rawarr.arr)
+
+        LuaStruct.TestStruct_WithOp.metatype({
+            __eq = function(a, b)
+                return a.x1 == b.x1 and a.x2 == b.x2
+            end,
+            __index = function(m)
+            end,
+            __newindex = function(m)
+            end
+        })
+
+        test_struct_withop1 = LuaStruct.TestStruct_WithOp.new()
+        test_struct_withop2 = LuaStruct.TestStruct_WithOp.new()
+        print(test_struct_withop1==test_struct_withop2)
+        test_struct_withop1.x1 = 2
+        print(test_struct_withop1==test_struct_withop2)
 
         print(nameof(LuaStruct.TestStruct))
     )");

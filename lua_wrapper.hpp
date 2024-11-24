@@ -468,8 +468,6 @@ void luax_new_userdata(lua_State *L, T data, const char *tname) {
 
 struct LuaNil {};
 
-namespace detail {
-
 template <typename T, typename I>
 constexpr bool check_integral_limit(I i) {
     static_assert(std::is_integral_v<I>);
@@ -675,6 +673,8 @@ T tolightud(lua_State *L, int arg) {
         return std::bit_cast<T>(tolightud<void *>(L, arg));
     }
 }
+
+namespace detail {
 
 template <typename T>
 auto Push(lua_State *L, T x)
@@ -1041,7 +1041,7 @@ public:
 
 namespace detail {
 
-auto Push(lua_State *L, LuaRef const &r) { r.Push(); }
+inline auto Push(lua_State *L, LuaRef const &r) { r.Push(); }
 
 }  // namespace detail
 
@@ -1876,7 +1876,7 @@ inline bool LuaTypeIsStruct(lua_State *L, LuaTypeid type) {
 }
 
 template <typename T>
-inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *type_name, size_t type_size, T fafunc) {
+inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *type_name, size_t type_size, T fieldaccess) {
 
     using fieldaccess_func = T;
 
@@ -1895,6 +1895,35 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
                 },
                 2);
         lua_setfield(L, -2, "new");
+
+        lua_pushstring(L, type_name);
+        lua_pushcclosure(
+                L,
+                [](lua_State *L) -> int {
+                    const char *_type_name = lua_tostring(L, lua_upvalueindex(1));
+                    luaL_getmetatable(L, _type_name);
+
+                    int mt1_idx = lua_absindex(L, -1);
+                    int mt2_idx = lua_absindex(L, 1);
+
+                    lua_pushnil(L);
+                    while (lua_next(L, mt2_idx) != 0) {
+                        std::string_view key = luaL_checkstring(L, -2);
+                        if (key == "__index" || key == "__newindex" || key == "__gc" || key == "__metatable") {
+                            lua_pop(L, 1);
+                            // printf("metatype with %s is not allow\n", key.data());
+                            continue;
+                        } else {
+                            lua_pushvalue(L, -2);      // 复制 key
+                            lua_insert(L, -2);         // 交换 key 和 value
+                            lua_settable(L, mt1_idx);  // mt1[key] = value
+                        }
+                    }
+                    return 0;
+                },
+                1);
+        lua_setfield(L, -2, "metatype");
+
         lua_setfield(L, -2, fieldName);
     }
 
@@ -1912,11 +1941,11 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
     lua_setfield(L, -2, "__gc");
 
     lua_pushboolean(L, 0);
-    lua_pushcclosure(L, fafunc, 1);
+    lua_pushcclosure(L, fieldaccess, 1);
     lua_setfield(L, -2, "__index");
 
     lua_pushboolean(L, 1);
-    lua_pushcclosure(L, fafunc, 1);
+    lua_pushcclosure(L, fieldaccess, 1);
     lua_setfield(L, -2, "__newindex");
 
     lua_pop(L, 1);
