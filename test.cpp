@@ -363,6 +363,18 @@ int main() {
     }
 
     {
+        vm.RunString(R"lua(
+        function test_invoke(a, b)
+            print("test_invoke", a, b)
+            return 3.14
+        end
+        )lua");
+
+        f32 ret = InvokeLua<f32>(L, "test_invoke", "a_str", 114514);
+        std::cout << ret << '\n';
+    }
+
+    {
         TestStruct_NoReg s1 = {1, 2, 3, 4, 5, 6, 7, 8, 2, 2, 3, 4, 5, 6, 7, 8};
         LuaPushRaw<TestStruct_NoReg>(L, s1);
         auto TestVec4_ = LuaGetRaw<TestStruct_NoReg>(L, -1);
