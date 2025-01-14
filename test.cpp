@@ -434,6 +434,8 @@ int main() {
             __index = function(m)
             end,
             __newindex = function(m)
+            end,
+            __gc = function(m)
             end
         })
 
