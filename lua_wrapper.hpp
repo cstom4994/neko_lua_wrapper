@@ -767,8 +767,30 @@ auto Get(lua_State *L, int N, T &x)
     x = lua_tostring(L, N);
 }
 
+template <typename>
+struct is_pointer_to_array : std::false_type {};
+
 template <typename T, std::size_t N>
-auto Push(lua_State *L, T (&arr)[N]) {
+struct is_pointer_to_array<T (*)[N]> : std::true_type {};
+
+template <typename T>
+auto Push(lua_State *L, T *x)
+    requires(!std::is_same_v<std::decay_t<T>, char> && !std::is_array_v<T> && !is_pointer_to_array<T *>::value)
+{
+    lua_pushlightuserdata(L, reinterpret_cast<void *>(x));
+}
+
+template <typename T>
+auto Get(lua_State *L, int index, T &x)
+    requires(std::is_pointer_v<T> && !std::is_same_v<std::remove_cv_t<T>, const char *>)
+{
+    x = reinterpret_cast<T>(lua_touserdata(L, index));
+}
+
+template <typename T, std::size_t N>
+auto Push(lua_State *L, T (&arr)[N])
+    requires(std::is_array_v<T>)
+{
     lua_newtable(L);  // 创建 Lua 表
     int i = 0;
     for (auto &x : arr) {
@@ -816,7 +838,7 @@ struct LuaStack {
     }
     template <typename T>
     static inline auto Get(lua_State *L, int index, T &value) {
-        return detail::Get<T>(L, index, value);
+        return detail::Get<std::remove_reference_t<T>>(L, index, value);
     }
 };
 
@@ -962,11 +984,14 @@ auto Push(lua_State *L, LuaTableElement<T> const &e) {
 
 class LuaRef : public LuaRefBase {
     friend LuaRefBase;
+    friend void DumpLuaRef(const LuaRef &ref);
 
 private:
     explicit LuaRef(lua_State *L, FromStackIndex fs) : LuaRefBase(L, fs) {}
 
 public:
+    LuaRef() : LuaRefBase(nullptr, LUA_REFNIL) {}
+
     LuaRef(lua_State *L) : LuaRefBase(L, LUA_REFNIL) {}
 
     LuaRef(lua_State *L, const std::string &global) : LuaRefBase(L, LUA_REFNIL) {
@@ -1022,6 +1047,8 @@ public:
         Push();
         return LuaTableElement<K>(L, key);
     }
+
+    bool IsRefNil() const { return m_ref == LUA_REFNIL; }
 
     static LuaRef FromStack(lua_State *L, int index = -1) {
         lua_pushvalue(L, index);
@@ -1474,6 +1501,15 @@ struct LuaVM {
     }
 };
 
+inline void DumpLuaRef(const LuaRef &ref) {
+    ref.Push();  // 把 LuaRef 存的值推到 Lua 栈顶
+    LuaVM::Tools::ForEachStack(ref.L, []<typename T>(int i, T v) -> int {
+        std::cout << i << ':' << v << std::endl;
+        return 0;
+    });
+    lua_pop(ref.L, 1);  // 清理 Lua 栈
+}
+
 namespace LuaValue {
 template <class>
 inline constexpr bool always_false_v = false;
@@ -1908,14 +1944,15 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
 
                     lua_pushnil(L);
                     while (lua_next(L, mt2_idx) != 0) {
-                        const char* key = luaL_checkstring(L, -2);
+                        const char *key = luaL_checkstring(L, -2);
                         u64 keyhash = fnv1a(key);
-                        if (keyhash == "__index"_hash ||     //
+                        if (keyhash == "__tostring"_hash ||  //
+                            keyhash == "__index"_hash ||     //
                             keyhash == "__newindex"_hash ||  //
                             keyhash == "__gc"_hash ||        //
                             keyhash == "__metatable"_hash) {
                             lua_pop(L, 1);
-                             printf("metatype with %s is not allow\n", key);
+                            printf("metatype with %s is not allow\n", key);
                             continue;
                         } else {
                             lua_pushvalue(L, -2);      // 复制 key
@@ -1943,6 +1980,17 @@ inline void LuaStructCreate(lua_State *L, const char *fieldName, const char *typ
             },
             1);
     lua_setfield(L, -2, "__gc");
+
+    lua_pushstring(L, type_name);
+    lua_pushcclosure(
+            L,
+            [](lua_State *L) -> int {
+                const char *_type_name = lua_tostring(L, lua_upvalueindex(1));
+                lua_pushstring(L, _type_name);
+                return 1;
+            },
+            1);
+    lua_setfield(L, -2, "__tostring");
 
     lua_pushboolean(L, 0);
     lua_pushcclosure(L, fieldaccess, 1);
@@ -1980,7 +2028,7 @@ int LuaStructField_w(lua_State *L, const char *typeName, const char *field, int 
 
 template <typename T>
 void LuaStruct(lua_State *L, const char *fieldName = reflection::GetTypeName<T>()) {
-
+    static_assert(std::is_standard_layout_v<T>);
     auto fieldaccess = [](lua_State *L) -> int {
         int index = 1;
         int set = lua_toboolean(L, lua_upvalueindex(1));
@@ -2431,9 +2479,19 @@ inline void LuaTypeTo(lua_State *L, LuaTypeid type_id, void *c_out, int index) {
 inline void VaradicLuaPush(lua_State *L) {}
 
 template <typename T, typename... Args>
-inline void VaradicLuaPush(lua_State *L, T &&t, Args... args) {
-    LuaPush<T>(L, std::forward<T>(t));
-    VaradicLuaPush(L, args...);
+inline void VaradicLuaPush(lua_State *L, T &&v, Args &&...args) {
+    using U = std::decay_t<T>;  // 确保 T 不是引用类型
+    if constexpr (std::is_aggregate_v<U>) {
+        bool isLuaStruct = LuaTypeIsStruct(L, LuaType<U>(L));
+        if (isLuaStruct) {
+            LuaStructPush<U>(L, v);
+        } else {  // 未经过注册的聚合类
+            assert(!"use LuaPushRaw");
+        }
+    } else {
+        LuaPush<U>(L, std::forward<T>(v));
+    }
+    VaradicLuaPush(L, std::forward<Args>(args)...);
 }
 
 template <typename R, typename... Args>
