@@ -3,6 +3,7 @@
 #include <string>
 #include <thread>
 
+#include "lua_cdata.hpp"
 #include "lua_wrapper.hpp"
 
 constexpr static inline const_str table_show_src = R"lua(
@@ -300,6 +301,8 @@ int main() {
             });
 
     LuaEnum<TestEnum>(L);
+
+    lua_register(L, "__cdata", neko_cdata);
 
     lua_newtable(L);
     LuaStruct<TestStruct>(L, "TestStruct");
